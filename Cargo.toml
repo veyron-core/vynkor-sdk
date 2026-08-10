@@ -1,6 +1,6 @@
 [package]
 name = "veyron-sdk"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 rust-version = "1.85"
 description = "Rust SDK for writing Veyron plugins — async IPC client, Plugin trait, and full Veyron wire protocol (framing, zstd compression, HMAC frame MACs, fragmentation, raw audio)."
