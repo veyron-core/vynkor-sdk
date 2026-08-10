@@ -458,8 +458,7 @@ impl VeyronClient {
 
     /// Publish an event to the kernel event bus. The kernel namespaces
     /// `event_type` as `"plugin.<this-client's-registered-id>.<event_type>"`
-    /// before delivering it to subscribers — see
-    /// docs/superpowers/specs/2026-07-06-plugin-event-publish-design.md.
+    /// before delivering it to subscribers.
     /// Requires `PERMISSION_EVENT_PUBLISH`. `timeout_ms == 0` uses the
     /// kernel default of 30s.
     pub async fn publish_event(

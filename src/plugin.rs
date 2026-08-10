@@ -74,7 +74,7 @@ pub trait Plugin {
 
     /// Connect, register and serve until shutdown. Socket path comes from
     /// `VEYRON_SOCKET_PATH`, falling back to the same per-user resolution as
-    /// the kernel (XDG_RUNTIME_DIR → /run/user/<uid> → ~/.veyron/run). Never
+    /// the kernel (XDG_RUNTIME_DIR → /run/user/{uid} → ~/.veyron/run). Never
     /// the world-writable shared /tmp (BUG-006).
     async fn run(&mut self) -> Result<(), VeyronError> {
         let socket_path = env::var("VEYRON_SOCKET_PATH")
