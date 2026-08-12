@@ -473,6 +473,8 @@ impl VeyronClient {
                 action: action.to_string(),
                 params_json: params_json.to_vec(),
                 timeout_ms,
+                streaming: false,
+                caller_plugin_id: String::new(),
             })),
             ..Default::default()
         };
