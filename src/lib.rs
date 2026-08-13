@@ -73,7 +73,7 @@ pub use veyron_wire::WireError as VeyronError;
 pub use veyron_wire::mac as frame_mac;
 
 /// Generated Protobuf types for the Veyron protocol
-/// (`proto/veyron_protocol.proto`).
+/// (`wire/proto/veyron_protocol.proto`).
 pub mod proto {
     pub use veyron_wire::proto::veyron::*;
 }

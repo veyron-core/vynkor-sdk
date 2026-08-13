@@ -1,6 +1,6 @@
 # veyron-sdk
 
-Rust SDK for writing [Veyron](https://github.com/mrsolusdev/veyron) plugins.
+Rust SDK for writing [Veyron](https://github.com/veyron-core/veyron) plugins.
 
 A Veyron plugin is a separate OS process supervised by the Veyron kernel. It
 talks to the kernel over a Unix domain socket using the Veyron wire protocol:
@@ -71,6 +71,23 @@ wire format cannot drift between the two sides. All flag bits from
 | `FLAG_FRAGMENTED`  | `VeyronClient::send_fragmented`                  | reassembled by `recv`/`recv_frame` (64 streams, 1 MiB, 30 s bounds) |
 | `FLAG_RAW_BINARY`  | `VeyronClient::send_raw_audio`                   | returned raw by `recv_frame`               |
 
+## Versioning & unpublished crates
+
+The SDK tracks the `veyron-wire` protocol: crate `0.1.x` corresponds to wire
+`0.2.x` (protocol v1.4 as of SDK `0.1.3`). Before a crates.io release the
+`veyron-wire` dependency may point at a version that isn't published yet —
+resolve it from git with a `[patch.crates-io]` override in your own
+`Cargo.toml` (or in `.cargo/config.toml`, gitignored):
+
+```toml
+[patch.crates-io]
+veyron-wire = { git = "https://github.com/veyron-core/veyron-wire" }
+```
+
+To release the SDK itself (`cargo publish`), crates.io requires registry
+dependencies — switch the `veyron-wire` requirement back to a plain version
+spec first, then publish `veyron-wire` before `veyron-sdk`.
+
 ## Client API
 
 For lower-level control, use `VeyronClient` directly:
@@ -81,8 +98,30 @@ let ack = client.register_with_token("weather", manifest, &jwt).await?;
 
 client.subscribe(vec!["alarm.fired".into()]).await?;
 let resp = client.send_action("get_weather", br#"{"city":"Berlin"}"#, 5_000).await?;
+let ack = client.publish_event("weather.updated", br#"{"city":"Berlin"}"#, 5_000).await?;
 let latency = client.ping().await?;
+
+let action_id = client.send_action_streaming("transcribe", 30_000).await?;
+client.send_request_chunk(&action_id, 0, b"hi", true).await?;
+client.send_response_chunk(&action_id, 0, b"ok").await?;
+client.close_session(&action_id, "done").await?;
 ```
+
+`publish_event` requires `PERMISSION_EVENT_PUBLISH`; `timeout_ms == 0` uses
+the kernel's 30s default. It returns the kernel's `EventPublishAck` as-is —
+inspect `ack.status` yourself (`EVENT_PUBLISH_OK`/`ERROR`/`PERMISSION_DENY`)
+— and only errors on a kernel `Error` envelope or on timeout.
+
+`send_action` follows the same `timeout_ms == 0` → 30s-default convention
+and returns the kernel's `ActionResponse` as-is (inspect `.status` yourself).
+It errors on a kernel `Error` envelope, on an `ActionStreamAbort` for this
+`action_id`, or on timeout. `send_action_streaming` fires an
+`ActionRequest{streaming: true}` and returns its generated `action_id`
+immediately, without waiting for any response — drive `recv`/chunks yourself
+afterward. `send_request_chunk`, `send_response_chunk`, and `close_session`
+are fire-and-forget sends (no response awaited); `close_session` has no
+`final` flag — the response side of a stream is terminated by an ordinary
+`ActionResponse`.
 
 Requests and responses are matched on a single connection; drive
 request/response traffic from one task, or use the `Plugin` trait's serve

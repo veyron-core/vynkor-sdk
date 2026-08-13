@@ -30,9 +30,10 @@ use veyron_wire::framing::{
 };
 use veyron_wire::mac::{compute_tag, derive_session_key, verify_tag};
 use veyron_wire::proto::veyron::{
-    envelope, ActionRequest, ActionResponse, AudioStreamChunk, Envelope, EventAck, KernelCommand,
-    KernelCommandAck, Ping, PluginManifest, PluginRegister, PluginRegisterAck, Subscribe,
-    Unsubscribe,
+    envelope, ActionRequest, ActionRequestChunk, ActionResponse, ActionResponseChunk,
+    AudioStreamChunk, Envelope, EventAck, EventPublish, EventPublishAck, KernelCommand,
+    KernelCommandAck, Ping, PluginManifest, PluginRegister, PluginRegisterAck, SessionClose,
+    Subscribe, Unsubscribe,
 };
 use veyron_wire::WireError as VeyronError;
 
@@ -455,6 +456,51 @@ impl VeyronClient {
         self.send("kernel", env).await
     }
 
+    /// Publish an event to the kernel event bus. The kernel namespaces
+    /// `event_type` as `"plugin.<this-client's-registered-id>.<event_type>"`
+    /// before delivering it to subscribers.
+    /// Requires `PERMISSION_EVENT_PUBLISH`. `timeout_ms == 0` uses the
+    /// kernel default of 30s.
+    pub async fn publish_event(
+        &mut self,
+        event_type: &str,
+        payload_json: &[u8],
+        timeout_ms: u32,
+    ) -> Result<EventPublishAck, VeyronError> {
+        let env = Envelope {
+            payload: Some(envelope::Payload::EventPublish(EventPublish {
+                event_type: event_type.to_string(),
+                payload_json: payload_json.to_vec(),
+            })),
+            ..Default::default()
+        };
+        self.send("kernel", env).await?;
+
+        let timeout = if timeout_ms == 0 {
+            DEFAULT_REQUEST_TIMEOUT
+        } else {
+            Duration::from_millis(timeout_ms as u64)
+        };
+        let deadline = Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(VeyronError::Timeout);
+            }
+            let response = self.recv_timeout(remaining).await?;
+            match response.payload {
+                Some(envelope::Payload::EventPublishAck(ack)) => return Ok(ack),
+                Some(envelope::Payload::Error(err)) => {
+                    return Err(VeyronError::Internal(format!(
+                        "kernel error: {} ({})",
+                        err.message, err.details
+                    )));
+                }
+                _ => continue, // unrelated traffic while waiting
+            }
+        }
+    }
+
     /// Ask the kernel to perform an action (e.g. `"get_weather"`,
     /// `"play_audio"`) and await its [`ActionResponse`]. `timeout_ms == 0`
     /// uses the kernel default of 30 s. Frames that arrive while waiting but
@@ -474,7 +520,7 @@ impl VeyronClient {
                 params_json: params_json.to_vec(),
                 timeout_ms,
                 streaming: false,
-                caller_plugin_id: String::new(),
+                ..Default::default()
             })),
             ..Default::default()
         };
@@ -496,6 +542,14 @@ impl VeyronClient {
                 Some(envelope::Payload::ActionResponse(resp)) if resp.action_id == action_id => {
                     return Ok(resp);
                 }
+                Some(envelope::Payload::ActionStreamAbort(abort))
+                    if abort.action_id == action_id =>
+                {
+                    return Err(VeyronError::Internal(format!(
+                        "stream aborted: {}",
+                        abort.reason
+                    )));
+                }
                 Some(envelope::Payload::Error(err)) => {
                     return Err(VeyronError::Internal(format!(
                         "kernel error: {} ({})",
@@ -505,6 +559,104 @@ impl VeyronClient {
                 _ => continue, // unrelated traffic while waiting
             }
         }
+    }
+
+    /// Like [`VeyronClient::send_action`] but for an action whose body will
+    /// be delivered incrementally via [`VeyronClient::send_request_chunk`]
+    /// rather than all at once in `params_json`. Returns the generated
+    /// `action_id` immediately — this does NOT wait for an `ActionResponse`;
+    /// drive that separately via [`VeyronClient::recv`]/`recv_timeout`,
+    /// matching on the same `action_id` (mirrors `send_action`'s own
+    /// single-task-drives-request/response convention).
+    pub async fn send_action_streaming(
+        &mut self,
+        action: &str,
+        timeout_ms: u32,
+    ) -> Result<String, VeyronError> {
+        let action_id = next_request_id("act");
+        let env = Envelope {
+            payload: Some(envelope::Payload::ActionRequest(ActionRequest {
+                action_id: action_id.clone(),
+                action: action.to_string(),
+                params_json: vec![],
+                timeout_ms,
+                streaming: true,
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+        self.send("kernel", env).await?;
+        Ok(action_id)
+    }
+
+    /// Send one chunk of a streaming action's request body. `action_id` is
+    /// the id returned by [`VeyronClient::send_action_streaming`]. Set
+    /// `is_final` on the last chunk.
+    pub async fn send_request_chunk(
+        &mut self,
+        action_id: &str,
+        seq: u32,
+        chunk: Vec<u8>,
+        is_final: bool,
+    ) -> Result<(), VeyronError> {
+        let env = Envelope {
+            payload: Some(envelope::Payload::ActionRequestChunk(ActionRequestChunk {
+                action_id: action_id.to_string(),
+                seq,
+                chunk,
+                r#final: is_final,
+            })),
+            ..Default::default()
+        };
+        self.send("kernel", env).await
+    }
+
+    /// Provider-side: send one chunk of a streaming action's response body.
+    /// `action_id` here is the id from the `ActionRequest` the provider
+    /// received (already kernel-internal, matching how a provider's terminal
+    /// `ActionResponse` is addressed today). Terminate the stream with a
+    /// normal `ActionResponse` — there is no separate "final" response chunk.
+    pub async fn send_response_chunk(
+        &mut self,
+        action_id: &str,
+        seq: u32,
+        chunk: Vec<u8>,
+    ) -> Result<(), VeyronError> {
+        let env = Envelope {
+            payload: Some(envelope::Payload::ActionResponseChunk(
+                ActionResponseChunk {
+                    action_id: action_id.to_string(),
+                    seq,
+                    chunk,
+                },
+            )),
+            ..Default::default()
+        };
+        self.send("kernel", env).await
+    }
+
+    /// R6-04: gracefully close a long-lived streaming session. `action_id`
+    /// is whichever id this side already uses to address the session — the
+    /// original `action_id` on the requester side (same as
+    /// [`VeyronClient::send_request_chunk`]), or the kernel-internal id on
+    /// the provider side (same as [`VeyronClient::send_response_chunk`]).
+    /// The kernel forwards this to the other peer and evicts the session;
+    /// only valid after the session has been accepted (the provider's first
+    /// `ActionResponse{status: ACTION_OK}`) — closing before that is
+    /// rejected as a protocol error.
+    pub async fn close_session(
+        &mut self,
+        action_id: &str,
+        reason: &str,
+    ) -> Result<(), VeyronError> {
+        let env = Envelope {
+            payload: Some(envelope::Payload::SessionClose(SessionClose {
+                action_id: action_id.to_string(),
+                reason: reason.to_string(),
+            })),
+            ..Default::default()
+        };
+        self.send("kernel", env).await
     }
 
     /// Send a [`KernelCommand`] and await its ack.

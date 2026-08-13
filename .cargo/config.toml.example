@@ -2,4 +2,4 @@
 # local veyron-wire checkout, e.g. while both repos are being developed
 # together before the first crates.io release.
 [patch.crates-io]
-veyron-wire = { path = "../veyron/wire" }
+veyron-wire = { path = "../veyron-wire" }

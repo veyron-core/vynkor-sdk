@@ -15,7 +15,8 @@ use veyron_sdk::framing::{
     FLAG_FRAGMENTED, FLAG_MAC_PRESENT, FLAG_RAW_BINARY, FRAG_HEADER_SIZE, MAX_PAYLOAD_SIZE,
 };
 use veyron_sdk::proto::{
-    envelope, Envelope, Event, Ping, PluginManifest, PluginRegisterAck, PluginShutdown,
+    envelope, ActionStreamAbort, Envelope, Event, Ping, PluginManifest, PluginRegisterAck,
+    PluginShutdown, SessionClose,
 };
 use veyron_sdk::{Plugin, VeyronClient, VeyronError};
 
@@ -451,4 +452,298 @@ async fn plugin_serve_loop_handles_ping_event_and_shutdown() {
     assert!(plugin.shutdown_called);
     assert_eq!(plugin.events_seen, vec!["evt-42".to_string()]);
     kernel.await.unwrap();
+}
+
+// ── T-07: on_message handler errors must propagate out of serve() ──────────
+
+struct FailingPlugin {
+    shutdown_called: bool,
+}
+
+impl Plugin for FailingPlugin {
+    fn id(&self) -> &str {
+        "failing-plugin"
+    }
+
+    fn manifest(&self) -> PluginManifest {
+        PluginManifest::default()
+    }
+
+    async fn on_message(&mut self, _env: Envelope) -> Result<Option<Envelope>, VeyronError> {
+        Err(VeyronError::Timeout)
+    }
+
+    async fn on_shutdown(&mut self) -> Result<(), VeyronError> {
+        self.shutdown_called = true;
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn plugin_serve_propagates_on_message_handler_error() {
+    let (a, mut kernel_side) = UnixStream::pair().unwrap();
+    let client = VeyronClient::from_stream(a, None);
+
+    let kernel = tokio::spawn(async move {
+        let _reg = read_frame(&mut kernel_side).await.unwrap();
+        let ack = Envelope {
+            payload: Some(envelope::Payload::PluginRegisterAck(PluginRegisterAck {
+                accepted: true,
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+        let mut buf = Vec::new();
+        ack.encode(&mut buf).unwrap();
+        let frame = Frame {
+            magic: 0x5652,
+            flags: 0,
+            length: buf.len() as u32,
+            target: [0u8; 32],
+            crc32: crc32fast::hash(&buf),
+            payload: buf.into(),
+            mac: None,
+        };
+        write_frame_raw(&mut kernel_side, &frame).await.unwrap();
+
+        // Any envelope not handled specially (Ping/Event/PluginShutdown) routes
+        // to on_message. A bare Pong lands there.
+        let msg = Envelope {
+            payload: Some(envelope::Payload::Pong(veyron_sdk::proto::Pong {
+                original_timestamp: 0,
+                server_timestamp: 0,
+            })),
+            ..Default::default()
+        };
+        let mut buf = Vec::new();
+        msg.encode(&mut buf).unwrap();
+        let frame = Frame {
+            magic: 0x5652,
+            flags: 0,
+            length: buf.len() as u32,
+            target: [0u8; 32],
+            crc32: crc32fast::hash(&buf),
+            payload: buf.into(),
+            mac: None,
+        };
+        write_frame_raw(&mut kernel_side, &frame).await.unwrap();
+        // Keep kernel_side alive until serve() has had time to observe the
+        // error and exit; drop happens when this task ends.
+        let _ = read_frame(&mut kernel_side).await;
+    });
+
+    let mut plugin = FailingPlugin {
+        shutdown_called: false,
+    };
+    let result = tokio::time::timeout(Duration::from_secs(5), plugin.serve(client, ""))
+        .await
+        .expect("serve loop did not exit after handler error");
+
+    assert!(
+        matches!(result, Err(VeyronError::Timeout)),
+        "handler error must propagate out of serve(), got {result:?}"
+    );
+    assert!(
+        plugin.shutdown_called,
+        "on_shutdown must still run before the error propagates"
+    );
+    let _ = kernel.await;
+}
+
+#[tokio::test]
+async fn send_action_streaming_sets_streaming_flag_and_returns_action_id() {
+    let (a, mut b) = UnixStream::pair().unwrap();
+    let mut client = VeyronClient::from_stream(a, None);
+
+    let action_id = client.send_action_streaming("upload", 5000).await.unwrap();
+    assert!(action_id.starts_with("act-"));
+
+    let env = read_frame(&mut b)
+        .await
+        .map(|frame| decode(&frame))
+        .unwrap();
+    match env.payload {
+        Some(envelope::Payload::ActionRequest(req)) => {
+            assert_eq!(req.action_id, action_id);
+            assert_eq!(req.action, "upload");
+            assert!(req.streaming);
+        }
+        other => panic!("expected ActionRequest, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn send_request_chunk_and_send_response_chunk_roundtrip() {
+    let (a, mut b) = UnixStream::pair().unwrap();
+    let mut client = VeyronClient::from_stream(a, None);
+
+    client
+        .send_request_chunk("act-1", 0, b"hello".to_vec(), false)
+        .await
+        .unwrap();
+    let env = read_frame(&mut b)
+        .await
+        .map(|frame| decode(&frame))
+        .unwrap();
+    match env.payload {
+        Some(envelope::Payload::ActionRequestChunk(c)) => {
+            assert_eq!(c.action_id, "act-1");
+            assert_eq!(c.seq, 0);
+            assert_eq!(c.chunk, b"hello");
+            assert!(!c.r#final);
+        }
+        other => panic!("expected ActionRequestChunk, got {other:?}"),
+    }
+
+    client
+        .send_response_chunk("kact-1", 3, b"world".to_vec())
+        .await
+        .unwrap();
+    let env = read_frame(&mut b)
+        .await
+        .map(|frame| decode(&frame))
+        .unwrap();
+    match env.payload {
+        Some(envelope::Payload::ActionResponseChunk(c)) => {
+            assert_eq!(c.action_id, "kact-1");
+            assert_eq!(c.seq, 3);
+            assert_eq!(c.chunk, b"world");
+        }
+        other => panic!("expected ActionResponseChunk, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn send_action_returns_error_when_stream_aborted_for_its_action_id() {
+    let (a, mut b) = UnixStream::pair().unwrap();
+    let mut client = VeyronClient::from_stream(a, None);
+
+    let send_fut = tokio::spawn(async move { client.send_action("upload", b"{}", 2000).await });
+
+    // Read the ActionRequest the client just sent so we know its action_id.
+    let env = read_frame(&mut b)
+        .await
+        .map(|frame| decode(&frame))
+        .unwrap();
+    let action_id = match env.payload {
+        Some(envelope::Payload::ActionRequest(req)) => req.action_id,
+        other => panic!("expected ActionRequest, got {other:?}"),
+    };
+
+    // Reply with an abort for that exact action_id instead of an ActionResponse.
+    let abort_env = Envelope {
+        payload: Some(envelope::Payload::ActionStreamAbort(ActionStreamAbort {
+            action_id: action_id.clone(),
+            reason: "receiver backpressure".to_string(),
+        })),
+        ..Default::default()
+    };
+    let mut buf = Vec::new();
+    abort_env.encode(&mut buf).unwrap();
+    let frame = Frame {
+        magic: 0x5652,
+        flags: 0,
+        length: buf.len() as u32,
+        target: [0u8; 32],
+        crc32: crc32fast::hash(&buf),
+        payload: buf.into(),
+        mac: None,
+    };
+    write_frame_raw(&mut b, &frame).await.unwrap();
+
+    let err = send_fut.await.unwrap().expect_err("expected an error");
+    match err {
+        VeyronError::Internal(msg) => {
+            assert!(msg.contains("receiver backpressure"), "got: {msg}");
+        }
+        other => panic!("expected Internal error, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn close_session_sends_session_close_envelope() {
+    let (a, mut b) = UnixStream::pair().unwrap();
+    let mut client = VeyronClient::from_stream(a, None);
+
+    client.close_session("act-1", "done").await.unwrap();
+
+    let env = read_frame(&mut b)
+        .await
+        .map(|frame| decode(&frame))
+        .unwrap();
+    match env.payload {
+        Some(envelope::Payload::SessionClose(close)) => {
+            assert_eq!(close.action_id, "act-1");
+            assert_eq!(close.reason, "done");
+        }
+        other => panic!("expected SessionClose, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn recv_distinguishes_session_close_from_stream_abort() {
+    let (a, mut b) = UnixStream::pair().unwrap();
+    let mut client = VeyronClient::from_stream(a, None);
+
+    // Inbound SessionClose (peer closed cleanly).
+    let close_env = Envelope {
+        payload: Some(envelope::Payload::SessionClose(SessionClose {
+            action_id: "act-1".to_string(),
+            reason: "client closed".to_string(),
+        })),
+        ..Default::default()
+    };
+    let mut buf = Vec::new();
+    close_env.encode(&mut buf).unwrap();
+    let frame = Frame {
+        magic: 0x5652,
+        flags: 0,
+        length: buf.len() as u32,
+        target: [0u8; 32],
+        crc32: crc32fast::hash(&buf),
+        payload: buf.into(),
+        mac: None,
+    };
+    write_frame_raw(&mut b, &frame).await.unwrap();
+
+    let received = client.recv().await.unwrap();
+    match received.payload {
+        Some(envelope::Payload::SessionClose(close)) => {
+            assert_eq!(close.action_id, "act-1");
+            assert_eq!(close.reason, "client closed");
+        }
+        other => panic!("expected SessionClose, got {other:?}"),
+    }
+
+    // Inbound ActionStreamAbort (kernel forced it) must decode as a
+    // distinct variant — callers can tell the two apart on the same
+    // action_id.
+    let abort_env = Envelope {
+        payload: Some(envelope::Payload::ActionStreamAbort(ActionStreamAbort {
+            action_id: "act-1".to_string(),
+            reason: "idle timeout".to_string(),
+        })),
+        ..Default::default()
+    };
+    let mut buf = Vec::new();
+    abort_env.encode(&mut buf).unwrap();
+    let frame = Frame {
+        magic: 0x5652,
+        flags: 0,
+        length: buf.len() as u32,
+        target: [0u8; 32],
+        crc32: crc32fast::hash(&buf),
+        payload: buf.into(),
+        mac: None,
+    };
+    write_frame_raw(&mut b, &frame).await.unwrap();
+
+    let received = client.recv().await.unwrap();
+    match received.payload {
+        Some(envelope::Payload::ActionStreamAbort(abort)) => {
+            assert_eq!(abort.action_id, "act-1");
+            assert_eq!(abort.reason, "idle timeout");
+        }
+        other => panic!("expected ActionStreamAbort, got {other:?}"),
+    }
 }

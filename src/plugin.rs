@@ -74,7 +74,7 @@ pub trait Plugin {
 
     /// Connect, register and serve until shutdown. Socket path comes from
     /// `VEYRON_SOCKET_PATH`, falling back to the same per-user resolution as
-    /// the kernel (XDG_RUNTIME_DIR → /run/user/<uid> → ~/.veyron/run). Never
+    /// the kernel (XDG_RUNTIME_DIR → /run/user/{uid} → ~/.veyron/run). Never
     /// the world-writable shared /tmp (BUG-006).
     async fn run(&mut self) -> Result<(), VeyronError> {
         let socket_path = env::var("VEYRON_SOCKET_PATH")
@@ -114,6 +114,12 @@ pub trait Plugin {
             let _ = self.on_shutdown().await;
             return Err(e);
         }
+        // A handler error ends the receive loop (see on_shutdown's doc
+        // comment): it's the plugin signalling a fatal condition. Captured
+        // here so it propagates out of `serve()` after `on_shutdown()` runs,
+        // instead of being silently swallowed by the `break` (T-07: Rust SDK
+        // was the only one of the three not surfacing this to the caller).
+        let mut handler_err: Option<VeyronError> = None;
         loop {
             let env = match client.recv().await {
                 Ok(env) => env,
@@ -141,19 +147,22 @@ pub trait Plugin {
                         }
                     }
                 }
-                _ => {
-                    // A handler error ends the receive loop (see on_shutdown's
-                    // doc comment): it's the plugin signalling a fatal condition.
-                    match self.on_message(env).await {
-                        Ok(Some(resp)) => {
-                            let _ = client.send("kernel", resp).await;
-                        }
-                        Ok(None) => {}
-                        Err(_) => break,
+                _ => match self.on_message(env).await {
+                    Ok(Some(resp)) => {
+                        let _ = client.send("kernel", resp).await;
                     }
-                }
+                    Ok(None) => {}
+                    Err(e) => {
+                        handler_err = Some(e);
+                        break;
+                    }
+                },
             }
         }
-        self.on_shutdown().await
+        self.on_shutdown().await?;
+        match handler_err {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 }
