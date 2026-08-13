@@ -74,7 +74,7 @@ wire format cannot drift between the two sides. All flag bits from
 ## Versioning & unpublished crates
 
 The SDK tracks the `veyron-wire` protocol: crate `0.1.x` corresponds to wire
-`0.2.x` (protocol v1.4 as of SDK `0.1.3`). Before a crates.io release the
+`0.2.x` (protocol v1.5 as of SDK `0.1.3`). Before a crates.io release the
 `veyron-wire` dependency may point at a version that isn't published yet —
 resolve it from git with a `[patch.crates-io]` override in your own
 `Cargo.toml` (or in `.cargo/config.toml`, gitignored):
