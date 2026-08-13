@@ -71,6 +71,23 @@ wire format cannot drift between the two sides. All flag bits from
 | `FLAG_FRAGMENTED`  | `VeyronClient::send_fragmented`                  | reassembled by `recv`/`recv_frame` (64 streams, 1 MiB, 30 s bounds) |
 | `FLAG_RAW_BINARY`  | `VeyronClient::send_raw_audio`                   | returned raw by `recv_frame`               |
 
+## Versioning & unpublished crates
+
+The SDK tracks the `veyron-wire` protocol: crate `0.1.x` corresponds to wire
+`0.2.x` (protocol v1.4 as of SDK `0.1.3`). Before a crates.io release the
+`veyron-wire` dependency may point at a version that isn't published yet —
+resolve it from git with a `[patch.crates-io]` override in your own
+`Cargo.toml` (or in `.cargo/config.toml`, gitignored):
+
+```toml
+[patch.crates-io]
+veyron-wire = { git = "https://github.com/veyron-core/veyron-wire" }
+```
+
+To release the SDK itself (`cargo publish`), crates.io requires registry
+dependencies — switch the `veyron-wire` requirement back to a plain version
+spec first, then publish `veyron-wire` before `veyron-sdk`.
+
 ## Client API
 
 For lower-level control, use `VeyronClient` directly:
