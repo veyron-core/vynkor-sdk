@@ -1,9 +1,9 @@
 [package]
 name = "veyron-sdk"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 rust-version = "1.85"
-description = "Rust SDK for writing Veyron plugins — async IPC client, Plugin trait, and full Veyron wire protocol (framing, zstd compression, HMAC frame MACs, fragmentation, raw audio)."
+description = "Rust SDK for writing Veyron plugins — async IPC client (UDS + WebSocket), Plugin trait, and full Veyron wire protocol (framing, zstd compression, HMAC frame MACs, fragmentation, raw audio)."
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/veyron-core/veyron-sdk-rust"
@@ -12,8 +12,10 @@ keywords = ["veyron", "plugin", "ipc", "sdk", "kernel"]
 categories = ["api-bindings", "asynchronous"]
 
 [dependencies]
-veyron-wire = "0.2.2"
+veyron-wire = "0.2.3"
 tokio = { version = "1", features = ["net", "io-util", "time", "rt", "macros", "sync"] }
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
 prost = "0.13"
 crc32fast = "1"
 

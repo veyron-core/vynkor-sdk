@@ -1,9 +1,10 @@
 //! # Veyron Rust SDK
 //!
 //! Write Veyron plugins in Rust. A plugin is a separate OS process that talks
-//! to the Veyron kernel over a Unix domain socket using the Veyron wire
-//! protocol (length-prefixed frames carrying Protobuf envelopes; see
-//! `docs/FRAMING.md` in the Veyron repository).
+//! to the Veyron kernel using the Veyron wire protocol (length-prefixed frames
+//! carrying Protobuf envelopes; see `docs/FRAMING.md` in the Veyron
+//! repository) over a Unix domain socket or — for remote devices — the
+//! kernel's WebSocket gateway.
 //!
 //! ## Quick start
 //!
@@ -53,12 +54,16 @@
 //! | `VEYRON_JWT_TOKEN`   | JWT presented at registration (secured kernels)            |
 //! | `VEYRON_JWT_SECRET`  | Shared secret; enables per-frame HMAC-SHA256 tags          |
 //!
+//! The same `VEYRON_JWT_TOKEN` / `VEYRON_JWT_SECRET` drive
+//! [`Plugin::run_ws`](crate::Plugin::run_ws), which connects over WebSocket.
+//!
 //! ## Protocol coverage
 //!
 //! Compression (`FLAG_COMPRESSED`), frame MACs (`FLAG_MAC_PRESENT`),
 //! fragmentation (`FLAG_FRAGMENTED`) and raw audio (`FLAG_RAW_BINARY`) are all
 //! handled — see [`VeyronClient`] for the transport API and [`framing`] for
-//! the shared wire-format primitives.
+//! the shared wire-format primitives. Over WebSocket, compression and
+//! fragmentation are outbound-disabled to match the gateway's limits (R5-03).
 
 pub mod client;
 pub mod concurrent;
@@ -66,7 +71,7 @@ pub mod framing;
 pub mod plugin;
 
 pub use client::VeyronClient;
-pub use concurrent::{ConcurrentHandler, response_envelope, run_concurrent_loop, serve_concurrent};
+pub use concurrent::{response_envelope, run_concurrent_loop, serve_concurrent, ConcurrentHandler};
 pub use plugin::Plugin;
 pub use veyron_wire::WireError as VeyronError;
 

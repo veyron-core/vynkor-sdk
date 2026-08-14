@@ -35,7 +35,9 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::client::VeyronClient;
-use crate::proto::{envelope, ActionRequest, ActionResponse, ActionStatus, Envelope, Event, PluginManifest, Pong};
+use crate::proto::{
+    envelope, ActionRequest, ActionResponse, ActionStatus, Envelope, Event, PluginManifest, Pong,
+};
 use crate::VeyronError;
 
 /// Size of the mpsc channel funneling completed response envelopes from
@@ -94,7 +96,10 @@ pub trait ConcurrentHandler: Send + Sync + 'static {
 
     /// Called once after successful registration, before the receive loop.
     /// Use the client to subscribe, negotiate streams, etc.
-    fn on_init(&self, _client: &mut VeyronClient) -> impl Future<Output = Result<(), VeyronError>> + Send {
+    fn on_init(
+        &self,
+        _client: &mut VeyronClient,
+    ) -> impl Future<Output = Result<(), VeyronError>> + Send {
         async { Ok(()) }
     }
 
@@ -127,14 +132,20 @@ pub trait ConcurrentHandler: Send + Sync + 'static {
     /// Called for each inbound [`Event`] the kernel delivers. Returning
     /// `Ok(..)` makes the loop send an `EventAck` so the kernel stops
     /// retrying; return a reply envelope to send additional traffic.
-    fn on_event(&self, _event: Event) -> impl Future<Output = Result<Option<Envelope>, VeyronError>> + Send {
+    fn on_event(
+        &self,
+        _event: Event,
+    ) -> impl Future<Output = Result<Option<Envelope>, VeyronError>> + Send {
         async { Ok(None) }
     }
 
     /// Called for any inbound envelope the loop does not handle itself
     /// (Ping, `PluginShutdown`, `ActionRequest` and `Event` are consumed
     /// by the loop). Return a reply envelope to send, or `None`.
-    fn on_message(&self, _env: Envelope) -> impl Future<Output = Result<Option<Envelope>, VeyronError>> + Send {
+    fn on_message(
+        &self,
+        _env: Envelope,
+    ) -> impl Future<Output = Result<Option<Envelope>, VeyronError>> + Send {
         async { Ok(None) }
     }
 
@@ -157,7 +168,12 @@ pub async fn serve_concurrent<H: ConcurrentHandler>(
     handler: Arc<H>,
 ) -> Result<(), VeyronError> {
     let ack = client
-        .register_full(handler.id(), handler.version(), handler.manifest(), jwt_token)
+        .register_full(
+            handler.id(),
+            handler.version(),
+            handler.manifest(),
+            jwt_token,
+        )
         .await?;
     if !ack.accepted {
         return Err(VeyronError::PermissionDenied(format!(
@@ -287,7 +303,10 @@ fn spawn_handler<H: ConcurrentHandler>(
         let envelopes = match join.await {
             Ok(envelopes) => envelopes,
             Err(join_err) => {
-                vec![response_envelope(action_id, Err(format!("handler panicked: {join_err}")))]
+                vec![response_envelope(
+                    action_id,
+                    Err(format!("handler panicked: {join_err}")),
+                )]
             }
         };
         // Receiver side only goes away when the main loop exits, at which

@@ -1,30 +1,48 @@
 //! Async client for the Veyron kernel IPC socket.
 //!
 //! [`VeyronClient`] speaks the full Veyron wire protocol as specified in
-//! `docs/FRAMING.md`:
+//! `docs/FRAMING.md` over two transports:
+//!
+//! - **UDS** (default) — Unix domain socket via [`VeyronClient::connect`] /
+//!   [`VeyronClient::connect_with_secret`].
+//! - **WebSocket** — the kernel's WS gateway (`ws://host:port/ws`) via
+//!   [`VeyronClient::connect_ws`], for remote devices (see the Remote Devices
+//!   roadmap, D-05). Registration, frame-MAC enable and reconnect mirror the
+//!   UDS client exactly; the only differences are dictated by the gateway
+//!   (R5-03): outbound frames are never zstd-compressed and never fragmented,
+//!   while `FLAG_RAW_BINARY` passes unchanged.
+//!
+//! Protocol surface (transport-independent):
 //!
 //! - **Framing** — 44-byte header (magic, flags, length, target, crc32) via the
 //!   kernel framing layer (re-exported in [`crate::framing`]).
 //! - **Compression** (`FLAG_COMPRESSED`) — outbound payloads ≥ 64 KiB are
-//!   transparently zstd-compressed by `write_frame_raw`; inbound frames are
-//!   decompressed and normalized by `read_frame`.
+//!   transparently zstd-compressed by `write_frame_raw` on the UDS path only;
+//!   inbound frames are decompressed and normalized by `read_frame`.
 //! - **MAC** (`FLAG_MAC_PRESENT`) — on secured kernels every frame carries an
 //!   HMAC-SHA256 tag over the *plaintext* header + payload, keyed by an
 //!   HKDF-derived per-connection session key.
 //! - **Fragmentation** (`FLAG_FRAGMENTED`) — large messages can be split into
-//!   fragments with [`VeyronClient::send_fragmented`]; inbound fragments are
-//!   reassembled transparently by [`VeyronClient::recv_frame`] with the same
-//!   bounds the kernel enforces (64 streams, 1 MiB, 30 s).
+//!   fragments with [`VeyronClient::send_fragmented`] on the UDS path; inbound
+//!   fragments are reassembled transparently by [`VeyronClient::recv_frame`]
+//!   with the same bounds the kernel enforces (64 streams, 1 MiB, 30 s).
 //! - **Raw binary** (`FLAG_RAW_BINARY`) — audio frames bypass Protobuf; see
 //!   [`VeyronClient::send_raw_audio`] and [`VeyronClient::recv_frame`].
 
 use crate::framing::{read_frame, Frame, FLAG_FRAGMENTED, FLAG_MAC_PRESENT, FLAG_RAW_BINARY};
+use futures_util::{SinkExt, StreamExt};
 use prost::Message;
 use std::collections::HashMap;
+use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::net::TcpStream;
 use tokio::net::UnixStream;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::http::HeaderValue;
+use tokio_tungstenite::tungstenite::protocol::Message as WsMessage;
+use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 use veyron_wire::framing::{
     parse_frag_header, serialize_header, write_frame_raw, FRAG_HEADER_SIZE, MAX_PAYLOAD_SIZE,
 };
@@ -71,15 +89,84 @@ impl ReassemblyBuf {
     }
 }
 
-/// Async connection to the Veyron kernel over a Unix domain socket.
+/// Wire transport backing a [`VeyronClient`].
 ///
-/// Create with [`VeyronClient::connect`] (no auth) or
-/// [`VeyronClient::connect_with_secret`] (secured kernel), then call
-/// [`VeyronClient::register`] / [`VeyronClient::register_with_token`] before
-/// any other traffic.
+/// UDS delegates to the shared framing layer (`write_frame_raw`/`read_frame`),
+/// which handles zstd compression of large payloads. WS mirrors those
+/// semantics with the R5-03 gateway limits: one frame per WebSocket binary
+/// message, never compressed (the gateway rejects `FLAG_COMPRESSED` and
+/// `FLAG_FRAGMENTED` inbound and does not normalize before MAC
+/// verification), while `FLAG_RAW_BINARY` passes unchanged.
+enum Transport {
+    Uds {
+        read: OwnedReadHalf,
+        write: OwnedWriteHalf,
+    },
+    Ws(Box<WebSocketStream<MaybeTlsStream<TcpStream>>>),
+}
+
+impl Transport {
+    async fn write_frame(&mut self, frame: &Frame) -> Result<(), VeyronError> {
+        match self {
+            Transport::Uds { write, .. } => write_frame_raw(write, frame).await,
+            Transport::Ws(ws) => {
+                // No compression over WS: the gateway rejects FLAG_COMPRESSED
+                // inbound, so never auto-compress (write_frame_raw would) and
+                // never send fragments. A frame is one WS binary message.
+                if frame.payload.len() > MAX_PAYLOAD_SIZE {
+                    return Err(VeyronError::PayloadTooLarge(frame.payload.len()));
+                }
+                let mut out = Vec::with_capacity(44 + frame.payload.len() + 32);
+                out.extend_from_slice(&serialize_header(frame));
+                out.extend_from_slice(&frame.payload);
+                if let Some(tag) = &frame.mac {
+                    out.extend_from_slice(tag);
+                }
+                ws.send(WsMessage::Binary(out)).await.map_err(ws_io_error)
+            }
+        }
+    }
+
+    async fn read_frame(&mut self) -> Result<Frame, VeyronError> {
+        match self {
+            Transport::Uds { read, .. } => read_frame(read).await,
+            Transport::Ws(ws) => loop {
+                match ws.next().await {
+                    Some(Ok(WsMessage::Binary(data))) => {
+                        let mut cursor: &[u8] = &data;
+                        return read_frame(&mut cursor).await;
+                    }
+                    Some(Ok(WsMessage::Close(_))) | None => {
+                        return Err(ws_io_error(io::Error::new(
+                            io::ErrorKind::UnexpectedEof,
+                            "websocket connection closed",
+                        )));
+                    }
+                    // WS control frames (ping/pong/text) are ignored; the
+                    // kernel gateway never sends them as traffic.
+                    Some(Ok(_)) => continue,
+                    Some(Err(e)) => return Err(ws_io_error(e)),
+                }
+            },
+        }
+    }
+}
+
+/// Map a tungstenite error onto [`VeyronError::Io`] so WS transport failures
+/// read like stream failures (matching how UDS EOF/errors surface).
+fn ws_io_error<E: Into<Box<dyn std::error::Error + Send + Sync>>>(e: E) -> VeyronError {
+    VeyronError::Io(io::Error::other(e))
+}
+
+/// Async connection to the Veyron kernel over a Unix domain socket or a
+/// WebSocket.
+///
+/// Create with [`VeyronClient::connect`] / [`VeyronClient::connect_with_secret`]
+/// (UDS, no auth / secured) or [`VeyronClient::connect_ws`] (the kernel's WS
+/// gateway, e.g. for remote devices), then call [`VeyronClient::register`] /
+/// [`VeyronClient::register_with_token`] before any other traffic.
 pub struct VeyronClient {
-    read: OwnedReadHalf,
-    write: OwnedWriteHalf,
+    transport: Transport,
     /// Shared JWT secret, needed to derive the frame-MAC key. None => no MAC.
     secret: Option<Vec<u8>>,
     /// Per-connection MAC key, set after a secured registration.
@@ -124,13 +211,53 @@ impl VeyronClient {
     pub fn from_stream(stream: UnixStream, secret: Option<Vec<u8>>) -> Self {
         let (read, write) = stream.into_split();
         Self {
-            read,
-            write,
+            transport: Transport::Uds { read, write },
             secret,
             session_key: None,
             reassembly: HashMap::new(),
             next_stream_id: 1,
         }
+    }
+
+    /// Connect to the kernel's WebSocket gateway (D-05). `url` is a
+    /// `ws://` or `wss://` endpoint, normally `ws://<host>:<port>/ws`.
+    ///
+    /// The client always offers the `veyron` subprotocol (the gateway's
+    /// handshake marker). `jwt_token`, when non-empty, is appended to it in
+    /// the `Sec-WebSocket-Protocol: veyron, <jwt>` header — the gateway's
+    /// only channel for the token; never put tokens in the URL, they leak
+    /// into access logs. Pass the same token to
+    /// [`VeyronClient::register_full`]; a non-empty token is required on
+    /// secured kernels. `secret` enables frame MACs after registration,
+    /// exactly like [`VeyronClient::connect_with_secret`] on UDS.
+    ///
+    /// On a dropped connection the client is left in its last state; reconnect
+    /// by calling `connect_ws` again and re-registering — the session key is
+    /// re-derived from the fresh nonce in the new ack (mirrors the UDS client).
+    pub async fn connect_ws(
+        url: &str,
+        jwt_token: &str,
+        secret: Option<&[u8]>,
+    ) -> Result<Self, VeyronError> {
+        let mut req = url
+            .into_client_request()
+            .map_err(|e| VeyronError::Internal(format!("invalid ws url: {e}")))?;
+        let protocol = if jwt_token.is_empty() {
+            "veyron".to_string()
+        } else {
+            format!("veyron, {jwt_token}")
+        };
+        let value = HeaderValue::from_str(&protocol)
+            .map_err(|e| VeyronError::Internal(format!("invalid jwt for ws header: {e}")))?;
+        req.headers_mut().insert("sec-websocket-protocol", value);
+        let (ws, _resp) = connect_async(req).await.map_err(ws_io_error)?;
+        Ok(Self {
+            transport: Transport::Ws(Box::new(ws)),
+            secret: secret.map(|s| s.to_vec()),
+            session_key: None,
+            reassembly: HashMap::new(),
+            next_stream_id: 1,
+        })
     }
 
     async fn connect_inner(
@@ -222,8 +349,9 @@ impl VeyronClient {
         self.send_raw(target, payload).await
     }
 
-    /// Send a pre-encoded payload. Applies MAC when secured; payloads ≥ 64 KiB
-    /// are transparently zstd-compressed by the framing layer.
+    /// Send a pre-encoded payload. Applies MAC when secured; on the UDS path
+    /// payloads ≥ 64 KiB are transparently zstd-compressed by the framing
+    /// layer (the WS path never compresses — see [`Transport`]).
     pub async fn send_raw(&mut self, target: &str, payload: Vec<u8>) -> Result<(), VeyronError> {
         self.send_raw_with_flags(target, 0, payload).await
     }
@@ -246,7 +374,7 @@ impl VeyronClient {
             let header = serialize_header(&frame);
             frame.mac = Some(compute_tag(key, &header, &frame.payload));
         }
-        write_frame_raw(&mut self.write, &frame).await
+        self.transport.write_frame(&frame).await
     }
 
     /// Split `payload` into `FLAG_FRAGMENTED` frames of at most `chunk_size`
@@ -254,12 +382,19 @@ impl VeyronClient {
     /// reassembles them into a single logical frame for `target`.
     ///
     /// Bounds mirror the kernel: total payload ≤ 1 MiB, ≤ 65 535 fragments.
+    /// UDS only — the WS gateway rejects fragmented inbound frames (R5-03),
+    /// so this errors on a WebSocket transport.
     pub async fn send_fragmented(
         &mut self,
         target: &str,
         payload: &[u8],
         chunk_size: usize,
     ) -> Result<(), VeyronError> {
+        if matches!(self.transport, Transport::Ws(_)) {
+            return Err(VeyronError::Internal(
+                "fragmented frames are not supported over WebSocket (R5-03)".into(),
+            ));
+        }
         if payload.len() > MAX_PAYLOAD_SIZE {
             return Err(VeyronError::PayloadTooLarge(payload.len()));
         }
@@ -301,7 +436,7 @@ impl VeyronClient {
     /// arrive already decompressed and normalized by the framing layer.
     pub async fn recv_frame(&mut self) -> Result<Frame, VeyronError> {
         loop {
-            let frame = read_frame(&mut self.read).await?;
+            let frame = self.transport.read_frame().await?;
             self.verify_frame_mac(&frame)?;
             if frame.flags & FLAG_FRAGMENTED != 0 {
                 if let Some(complete) = self.absorb_fragment(frame)? {
