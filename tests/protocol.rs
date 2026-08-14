@@ -15,8 +15,8 @@ use veyron_sdk::framing::{
     FLAG_FRAGMENTED, FLAG_MAC_PRESENT, FLAG_RAW_BINARY, FRAG_HEADER_SIZE, MAX_PAYLOAD_SIZE,
 };
 use veyron_sdk::proto::{
-    envelope, ActionStreamAbort, Envelope, Event, Ping, PluginManifest, PluginRegisterAck,
-    PluginShutdown, SessionClose,
+    envelope, ActionRequest, ActionStatus, ActionStreamAbort, Envelope, Event, Ping,
+    PluginManifest, PluginRegisterAck, PluginShutdown, SessionClose,
 };
 use veyron_sdk::{Plugin, VeyronClient, VeyronError};
 
@@ -746,4 +746,197 @@ async fn recv_distinguishes_session_close_from_stream_abort() {
         }
         other => panic!("expected ActionStreamAbort, got {other:?}"),
     }
+}
+
+// ── Concurrent serve loop (hot-path plugins) ─────────────────────────
+
+use std::sync::Arc;
+use veyron_sdk::concurrent::{response_envelope, run_concurrent_loop};
+use veyron_sdk::ConcurrentHandler;
+
+/// Handler that echoes params back, optionally panicking on a marker
+/// action and optionally rejecting a marker caller via the accept gate.
+struct TestConcurrentHandler;
+
+impl ConcurrentHandler for TestConcurrentHandler {
+    fn id(&self) -> &str {
+        "test-concurrent"
+    }
+
+    fn version(&self) -> &str {
+        "1.2.3"
+    }
+
+    fn manifest(&self) -> PluginManifest {
+        PluginManifest {
+            actions: vec!["echo".into(), "panic".into()],
+            ..Default::default()
+        }
+    }
+
+    fn accept(&self, req: &veyron_sdk::proto::ActionRequest) -> Result<(), String> {
+        if req.caller_plugin_id == "rejected-caller" {
+            return Err("caller rejected by gate".into());
+        }
+        Ok(())
+    }
+
+    async fn on_action(
+        &self,
+        req: veyron_sdk::proto::ActionRequest,
+    ) -> Vec<Envelope> {
+        if req.action == "panic" {
+            panic!("boom");
+        }
+        vec![response_envelope(req.action_id, Ok(req.params_json))]
+    }
+}
+
+#[tokio::test]
+async fn concurrent_loop_handles_burst_and_ping_and_shutdown() {
+    let (plugin_side, kernel_side) = UnixStream::pair().unwrap();
+    let client = VeyronClient::from_stream(plugin_side, None);
+    let mut kernel = VeyronClient::from_stream(kernel_side, None);
+    let handler = Arc::new(TestConcurrentHandler);
+
+    let loop_task = tokio::spawn(run_concurrent_loop(client, handler));
+
+    // Ping → Pong handled by the loop itself.
+    let ping = Envelope {
+        payload: Some(envelope::Payload::Ping(Ping { timestamp: 777 })),
+        ..Default::default()
+    };
+    kernel.send("kernel", ping).await.unwrap();
+    let pong = kernel.recv().await.unwrap();
+    match pong.payload {
+        Some(envelope::Payload::Pong(p)) => assert_eq!(p.original_timestamp, 777),
+        other => panic!("expected Pong, got {other:?}"),
+    }
+
+    // Burst of ActionRequests back-to-back — all must be answered, in any
+    // order (kernel matches on action_id). Under a sequential loop a slow
+    // handler would stall this; here every request gets a spawned task.
+    const N: usize = 20;
+    for i in 0..N {
+        let req = Envelope {
+            payload: Some(envelope::Payload::ActionRequest(ActionRequest {
+                action_id: format!("act-{i}"),
+                action: "echo".into(),
+                params_json: format!("v{i}").into_bytes(),
+                timeout_ms: 0,
+                streaming: false,
+                caller_plugin_id: "caller_x".into(),
+            })),
+            ..Default::default()
+        };
+        kernel.send("kernel", req).await.unwrap();
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..N {
+        let env = tokio::time::timeout(Duration::from_secs(5), kernel.recv())
+            .await
+            .expect("timed out waiting for response — loop likely deadlocked")
+            .unwrap();
+        match env.payload {
+            Some(envelope::Payload::ActionResponse(resp)) => {
+                assert_eq!(resp.status, ActionStatus::ActionOk as i32);
+                assert!(seen.insert(resp.action_id.clone()), "duplicate response {}", resp.action_id);
+                let id: usize = resp.action_id.strip_prefix("act-").unwrap().parse().unwrap();
+                assert_eq!(resp.data_json, format!("v{id}").into_bytes());
+            }
+            other => panic!("unexpected payload: {other:?}"),
+        }
+    }
+
+    // Gate: a caller rejected by accept() gets an immediate ACTION_ERROR
+    // and no handler task is spawned.
+    let req = Envelope {
+        payload: Some(envelope::Payload::ActionRequest(ActionRequest {
+            action_id: "act-rejected".into(),
+            action: "echo".into(),
+            params_json: Vec::new(),
+            timeout_ms: 0,
+            streaming: false,
+            caller_plugin_id: "rejected-caller".into(),
+        })),
+        ..Default::default()
+    };
+    kernel.send("kernel", req).await.unwrap();
+    let env = kernel.recv().await.unwrap();
+    match env.payload {
+        Some(envelope::Payload::ActionResponse(resp)) => {
+            assert_eq!(resp.status, ActionStatus::ActionError as i32);
+            assert!(resp.error.contains("gate"), "error was: {}", resp.error);
+        }
+        other => panic!("expected rejected ActionResponse, got {other:?}"),
+    }
+
+    // Shutdown → loop exits cleanly.
+    let shutdown = Envelope {
+        payload: Some(envelope::Payload::PluginShutdown(PluginShutdown {
+            reason: "test done".into(),
+            grace_seconds: 0,
+        })),
+        ..Default::default()
+    };
+    kernel.send("kernel", shutdown).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), loop_task)
+        .await
+        .expect("run_concurrent_loop did not exit after PluginShutdown")
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
+async fn concurrent_loop_turns_handler_panic_into_action_error() {
+    let (plugin_side, kernel_side) = UnixStream::pair().unwrap();
+    let client = VeyronClient::from_stream(plugin_side, None);
+    let mut kernel = VeyronClient::from_stream(kernel_side, None);
+    let handler = Arc::new(TestConcurrentHandler);
+
+    let loop_task = tokio::spawn(run_concurrent_loop(client, handler));
+
+    let req = Envelope {
+        payload: Some(envelope::Payload::ActionRequest(ActionRequest {
+            action_id: "act-panic".into(),
+            action: "panic".into(),
+            params_json: Vec::new(),
+            timeout_ms: 0,
+            streaming: false,
+            caller_plugin_id: "caller_x".into(),
+        })),
+        ..Default::default()
+    };
+    kernel.send("kernel", req).await.unwrap();
+
+    let env = tokio::time::timeout(Duration::from_secs(5), kernel.recv())
+        .await
+        .expect("timed out waiting for panic-derived response")
+        .unwrap();
+    match env.payload {
+        Some(envelope::Payload::ActionResponse(resp)) => {
+            assert_eq!(resp.status, ActionStatus::ActionError as i32);
+            assert!(
+                resp.error.contains("panicked"),
+                "expected panic-derived error, got: {}",
+                resp.error
+            );
+        }
+        other => panic!("expected ActionResponse, got {other:?}"),
+    }
+
+    let shutdown = Envelope {
+        payload: Some(envelope::Payload::PluginShutdown(PluginShutdown {
+            reason: "test done".into(),
+            grace_seconds: 0,
+        })),
+        ..Default::default()
+    };
+    kernel.send("kernel", shutdown).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), loop_task)
+        .await
+        .expect("loop did not exit")
+        .unwrap()
+        .unwrap();
 }

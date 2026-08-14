@@ -61,10 +61,12 @@
 //! the shared wire-format primitives.
 
 pub mod client;
+pub mod concurrent;
 pub mod framing;
 pub mod plugin;
 
 pub use client::VeyronClient;
+pub use concurrent::{ConcurrentHandler, response_envelope, run_concurrent_loop, serve_concurrent};
 pub use plugin::Plugin;
 pub use veyron_wire::WireError as VeyronError;
 
