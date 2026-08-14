@@ -781,10 +781,7 @@ impl ConcurrentHandler for TestConcurrentHandler {
         Ok(())
     }
 
-    async fn on_action(
-        &self,
-        req: veyron_sdk::proto::ActionRequest,
-    ) -> Vec<Envelope> {
+    async fn on_action(&self, req: veyron_sdk::proto::ActionRequest) -> Vec<Envelope> {
         if req.action == "panic" {
             panic!("boom");
         }
@@ -841,8 +838,17 @@ async fn concurrent_loop_handles_burst_and_ping_and_shutdown() {
         match env.payload {
             Some(envelope::Payload::ActionResponse(resp)) => {
                 assert_eq!(resp.status, ActionStatus::ActionOk as i32);
-                assert!(seen.insert(resp.action_id.clone()), "duplicate response {}", resp.action_id);
-                let id: usize = resp.action_id.strip_prefix("act-").unwrap().parse().unwrap();
+                assert!(
+                    seen.insert(resp.action_id.clone()),
+                    "duplicate response {}",
+                    resp.action_id
+                );
+                let id: usize = resp
+                    .action_id
+                    .strip_prefix("act-")
+                    .unwrap()
+                    .parse()
+                    .unwrap();
                 assert_eq!(resp.data_json, format!("v{id}").into_bytes());
             }
             other => panic!("unexpected payload: {other:?}"),

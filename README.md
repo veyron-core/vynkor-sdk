@@ -3,9 +3,10 @@
 Rust SDK for writing [Veyron](https://github.com/veyron-core/veyron) plugins.
 
 A Veyron plugin is a separate OS process supervised by the Veyron kernel. It
-talks to the kernel over a Unix domain socket using the Veyron wire protocol:
-44-byte framed messages carrying Protobuf envelopes, with optional zstd
-compression, HMAC-SHA256 frame authentication, and fragmentation.
+talks to the kernel using the Veyron wire protocol — 44-byte framed messages
+carrying Protobuf envelopes, with optional zstd compression, HMAC-SHA256 frame
+authentication, and fragmentation — over a Unix domain socket (local plugins)
+or the kernel's WebSocket gateway (remote devices, D-05).
 
 ## Quick start
 
@@ -50,6 +51,27 @@ async fn main() -> Result<(), VeyronError> {
 to shut down. The SDK answers `Ping` automatically, acknowledges delivered
 events after `on_event` succeeds, and exits the loop on `PluginShutdown`.
 
+### WebSocket transport (remote devices)
+
+`Plugin::run_ws(url)` is the WS mirror of `Plugin::run` for plugins that live
+on a different machine than the kernel (see the Remote Devices roadmap). The
+URL is the gateway endpoint, e.g. `ws://host:8080/ws`:
+
+```rust
+#[tokio::main]
+async fn main() -> Result<(), VeyronError> {
+    EchoPlugin.run_ws("ws://192.168.1.10:8080/ws").await
+}
+```
+
+JWT credentials come from the same env vars as the UDS path — the token is
+presented both in the `Sec-WebSocket-Protocol: veyron, <jwt>` handshake header
+and in the registration envelope. Registration, frame-MAC enable and reconnect
+behave exactly like the UDS client. Two differences are dictated by the
+gateway (R5-03): outbound frames are never zstd-compressed and never
+fragmented over WS (`send_fragmented` errors), while `FLAG_RAW_BINARY` audio
+passes unchanged.
+
 ## Environment
 
 | Variable             | Meaning                                                        |
@@ -67,14 +89,14 @@ wire format cannot drift between the two sides. All flag bits from
 | Flag               | Send                                             | Receive                                    |
 |--------------------|--------------------------------------------------|--------------------------------------------|
 | `FLAG_MAC_PRESENT` | automatic after secured registration             | verified; untagged frames rejected         |
-| `FLAG_COMPRESSED`  | automatic for payloads ≥ 64 KiB                  | decompressed + normalized by `read_frame`  |
-| `FLAG_FRAGMENTED`  | `VeyronClient::send_fragmented`                  | reassembled by `recv`/`recv_frame` (64 streams, 1 MiB, 30 s bounds) |
-| `FLAG_RAW_BINARY`  | `VeyronClient::send_raw_audio`                   | returned raw by `recv_frame`               |
+| `FLAG_COMPRESSED`  | automatic for payloads ≥ 64 KiB (UDS only — the WS gateway rejects compressed inbound frames, so the WS transport never compresses) | decompressed + normalized by `read_frame`  |
+| `FLAG_FRAGMENTED`  | `VeyronClient::send_fragmented` (UDS only — errors over WS) | reassembled by `recv`/`recv_frame` (64 streams, 1 MiB, 30 s bounds) |
+| `FLAG_RAW_BINARY`  | `VeyronClient::send_raw_audio` (UDS and WS)      | returned raw by `recv_frame`               |
 
 ## Versioning & unpublished crates
 
 The SDK tracks the `veyron-wire` protocol: crate `0.1.x` corresponds to wire
-`0.2.x` (protocol v1.5 as of SDK `0.1.3`). Before a crates.io release the
+`0.2.x` (protocol v1.6 as of SDK `0.1.5`). Before a crates.io release the
 `veyron-wire` dependency may point at a version that isn't published yet —
 resolve it from git with a `[patch.crates-io]` override in your own
 `Cargo.toml` (or in `.cargo/config.toml`, gitignored):
@@ -105,6 +127,13 @@ let action_id = client.send_action_streaming("transcribe", 30_000).await?;
 client.send_request_chunk(&action_id, 0, b"hi", true).await?;
 client.send_response_chunk(&action_id, 0, b"ok").await?;
 client.close_session(&action_id, "done").await?;
+```
+
+Over WebSocket, connect with the gateway URL instead — same API afterwards:
+
+```rust,ignore
+let mut client = VeyronClient::connect_ws("ws://host:8080/ws", &jwt, Some(secret)).await?;
+let ack = client.register_with_token("device.geo", manifest, &jwt).await?;
 ```
 
 `publish_event` requires `PERMISSION_EVENT_PUBLISH`; `timeout_ms == 0` uses

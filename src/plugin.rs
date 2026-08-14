@@ -94,6 +94,22 @@ pub trait Plugin {
         self.serve(client, &token).await
     }
 
+    /// Connect to a kernel WebSocket gateway (D-05), register and serve until
+    /// shutdown — the WS mirror of [`Plugin::run_with`] for remote devices.
+    /// JWT credentials come from the same env vars as the UDS path
+    /// (`VEYRON_JWT_TOKEN` / `VEYRON_JWT_SECRET`); the token is presented both
+    /// in the `Sec-WebSocket-Protocol` handshake header and in the
+    /// registration envelope.
+    async fn run_ws(&mut self, url: &str) -> Result<(), VeyronError> {
+        let token = env::var("VEYRON_JWT_TOKEN").unwrap_or_default();
+        let secret = env::var("VEYRON_JWT_SECRET").ok().filter(|s| !s.is_empty());
+        let client = match &secret {
+            Some(s) => VeyronClient::connect_ws(url, &token, Some(s.as_bytes())).await?,
+            None => VeyronClient::connect_ws(url, &token, None).await?,
+        };
+        self.serve(client, &token).await
+    }
+
     /// Register on an existing client and run the receive loop. Building
     /// block for [`Plugin::run`]; also useful in tests.
     async fn serve(
