@@ -58,6 +58,7 @@ async fn spawn_kernel(bin: PathBuf, jwt_secret: Option<&str>) -> KernelProc {
          socket_path: {dir}/veyron.sock\n\
          pid_file: {dir}/vyn.pid\n\
          log_file: {dir}/vyn.log\n\
+         tls: false\n\
          allow_no_auth: {}\n",
         jwt_secret.is_none()
     );
