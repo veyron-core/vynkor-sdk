@@ -67,11 +67,15 @@
 
 pub mod client;
 pub mod concurrent;
+pub mod confirmation_gate;
 pub mod framing;
 pub mod plugin;
 
 pub use client::VeyronClient;
 pub use concurrent::{response_envelope, run_concurrent_loop, serve_concurrent, ConcurrentHandler};
+pub use confirmation_gate::{
+    send_confirmation, send_confirmation_request, ConfirmationGate, PendingAction,
+};
 pub use plugin::Plugin;
 pub use veyron_wire::WireError as VeyronError;
 

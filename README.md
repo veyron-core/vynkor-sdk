@@ -51,6 +51,44 @@ async fn main() -> Result<(), VeyronError> {
 to shut down. The SDK answers `Ping` automatically, acknowledges delivered
 events after `on_event` succeeds, and exits the loop on `PluginShutdown`.
 
+### Confirmation gate (high-risk actions)
+
+For high-risk operations (a kernel gate would violate the dumb-core rule, so
+the gate lives in the plugin), [`ConfirmationGate`] splits one operation into
+`request_<op>` — any caller may invoke, the action spec is marked
+`requires_confirmation`, nothing executes — and `confirm_<op>`, which only
+callers on the gate's allowlist may invoke and which executes the params
+stored at request time. Enforcement keys on the kernel-stamped
+`caller_plugin_id`, which the kernel overwrites from the real registered
+sender and cannot be spoofed:
+
+```rust
+use veyron_sdk::confirmation_gate::{ConfirmationGate, send_confirmation_request, send_confirmation};
+use veyron_sdk::proto::ActionRisk;
+
+let gate = ConfirmationGate::new(
+    "transfer",
+    "Move money between accounts",
+    r#"{"type":"object"}"#,
+    ActionRisk::Critical,
+    &["device.phone"],      // only the user's device may confirm
+)?;
+let (actions, action_specs) = gate.manifest_entries();
+// merge into PluginManifest { actions, action_specs, .. }
+
+// provider side, per inbound request:
+gate.route(req, |params| execute(params)).await
+
+// caller side:
+let pending_id = send_confirmation_request(&mut client, "transfer", params).await?;
+let resp = send_confirmation(&mut client, "transfer", &pending_id).await?;
+```
+
+Pending requests expire (default 5 minutes, configurable via
+`with_pending_ttl`), and the allowlist supports `prefix.*` globs so
+`"device.*"` covers every device bridge mirror. See `src/confirmation_gate.rs`
+for the full API.
+
 ### WebSocket transport (remote devices)
 
 `Plugin::run_ws(url)` is the WS mirror of `Plugin::run` for plugins that live
