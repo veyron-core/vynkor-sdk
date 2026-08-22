@@ -1,12 +1,12 @@
-//! Async client for the Veyron kernel IPC socket.
+//! Async client for the Vynkor kernel IPC socket.
 //!
-//! [`VeyronClient`] speaks the full Veyron wire protocol as specified in
+//! [`VynkorClient`] speaks the full Vynkor wire protocol as specified in
 //! `docs/FRAMING.md` over two transports:
 //!
-//! - **UDS** (default) — Unix domain socket via [`VeyronClient::connect`] /
-//!   [`VeyronClient::connect_with_secret`].
+//! - **UDS** (default) — Unix domain socket via [`VynkorClient::connect`] /
+//!   [`VynkorClient::connect_with_secret`].
 //! - **WebSocket** — the kernel's WS gateway (`ws://host:port/ws`) via
-//!   [`VeyronClient::connect_ws`], for remote devices (see the Remote Devices
+//!   [`VynkorClient::connect_ws`], for remote devices (see the Remote Devices
 //!   roadmap, D-05). Registration, frame-MAC enable and reconnect mirror the
 //!   UDS client exactly; the only differences are dictated by the gateway
 //!   (R5-03): outbound frames are never zstd-compressed and never fragmented,
@@ -23,11 +23,11 @@
 //!   HMAC-SHA256 tag over the *plaintext* header + payload, keyed by an
 //!   HKDF-derived per-connection session key.
 //! - **Fragmentation** (`FLAG_FRAGMENTED`) — large messages can be split into
-//!   fragments with [`VeyronClient::send_fragmented`] on the UDS path; inbound
-//!   fragments are reassembled transparently by [`VeyronClient::recv_frame`]
+//!   fragments with [`VynkorClient::send_fragmented`] on the UDS path; inbound
+//!   fragments are reassembled transparently by [`VynkorClient::recv_frame`]
 //!   with the same bounds the kernel enforces (64 streams, 1 MiB, 30 s).
 //! - **Raw binary** (`FLAG_RAW_BINARY`) — audio frames bypass Protobuf; see
-//!   [`VeyronClient::send_raw_audio`] and [`VeyronClient::recv_frame`].
+//!   [`VynkorClient::send_raw_audio`] and [`VynkorClient::recv_frame`].
 
 use crate::framing::{read_frame, Frame, FLAG_FRAGMENTED, FLAG_MAC_PRESENT, FLAG_RAW_BINARY};
 use futures_util::{SinkExt, StreamExt};
@@ -53,7 +53,7 @@ use vynkor_wire::proto::veyron::{
     KernelCommandAck, Ping, PluginManifest, PluginRegister, PluginRegisterAck, SessionClose,
     Subscribe, Unsubscribe,
 };
-use vynkor_wire::WireError as VeyronError;
+use vynkor_wire::WireError as VynkorError;
 
 /// Mirror of the kernel's inbound reassembly bounds (see `src/ipc/connection.rs`).
 const MAX_REASSEMBLY_STREAMS: usize = 64;
@@ -89,7 +89,7 @@ impl ReassemblyBuf {
     }
 }
 
-/// Wire transport backing a [`VeyronClient`].
+/// Wire transport backing a [`VynkorClient`].
 ///
 /// UDS delegates to the shared framing layer (`write_frame_raw`/`read_frame`),
 /// which handles zstd compression of large payloads. WS mirrors those
@@ -106,7 +106,7 @@ enum Transport {
 }
 
 impl Transport {
-    async fn write_frame(&mut self, frame: &Frame) -> Result<(), VeyronError> {
+    async fn write_frame(&mut self, frame: &Frame) -> Result<(), VynkorError> {
         match self {
             Transport::Uds { write, .. } => write_frame_raw(write, frame).await,
             Transport::Ws(ws) => {
@@ -114,7 +114,7 @@ impl Transport {
                 // inbound, so never auto-compress (write_frame_raw would) and
                 // never send fragments. A frame is one WS binary message.
                 if frame.payload.len() > MAX_PAYLOAD_SIZE {
-                    return Err(VeyronError::PayloadTooLarge(frame.payload.len()));
+                    return Err(VynkorError::PayloadTooLarge(frame.payload.len()));
                 }
                 let mut out = Vec::with_capacity(44 + frame.payload.len() + 32);
                 out.extend_from_slice(&serialize_header(frame));
@@ -127,7 +127,7 @@ impl Transport {
         }
     }
 
-    async fn read_frame(&mut self) -> Result<Frame, VeyronError> {
+    async fn read_frame(&mut self) -> Result<Frame, VynkorError> {
         match self {
             Transport::Uds { read, .. } => read_frame(read).await,
             Transport::Ws(ws) => loop {
@@ -152,20 +152,20 @@ impl Transport {
     }
 }
 
-/// Map a tungstenite error onto [`VeyronError::Io`] so WS transport failures
+/// Map a tungstenite error onto [`VynkorError::Io`] so WS transport failures
 /// read like stream failures (matching how UDS EOF/errors surface).
-fn ws_io_error<E: Into<Box<dyn std::error::Error + Send + Sync>>>(e: E) -> VeyronError {
-    VeyronError::Io(io::Error::other(e))
+fn ws_io_error<E: Into<Box<dyn std::error::Error + Send + Sync>>>(e: E) -> VynkorError {
+    VynkorError::Io(io::Error::other(e))
 }
 
-/// Async connection to the Veyron kernel over a Unix domain socket or a
+/// Async connection to the Vynkor kernel over a Unix domain socket or a
 /// WebSocket.
 ///
-/// Create with [`VeyronClient::connect`] / [`VeyronClient::connect_with_secret`]
-/// (UDS, no auth / secured) or [`VeyronClient::connect_ws`] (the kernel's WS
-/// gateway, e.g. for remote devices), then call [`VeyronClient::register`] /
-/// [`VeyronClient::register_with_token`] before any other traffic.
-pub struct VeyronClient {
+/// Create with [`VynkorClient::connect`] / [`VynkorClient::connect_with_secret`]
+/// (UDS, no auth / secured) or [`VynkorClient::connect_ws`] (the kernel's WS
+/// gateway, e.g. for remote devices), then call [`VynkorClient::register`] /
+/// [`VynkorClient::register_with_token`] before any other traffic.
+pub struct VynkorClient {
     transport: Transport,
     /// Shared JWT secret, needed to derive the frame-MAC key. None => no MAC.
     secret: Option<Vec<u8>>,
@@ -173,13 +173,13 @@ pub struct VeyronClient {
     session_key: Option<[u8; 32]>,
     /// Inbound fragment reassembly buffers, keyed by stream_id.
     reassembly: HashMap<u32, ReassemblyBuf>,
-    /// Monotonic stream id source for [`VeyronClient::send_fragmented`].
+    /// Monotonic stream id source for [`VynkorClient::send_fragmented`].
     next_stream_id: u32,
 }
 
-impl VeyronClient {
+impl VynkorClient {
     /// Connect to an unsecured kernel (started with `allow_no_auth: true`).
-    pub async fn connect(socket_path: &str) -> Result<Self, VeyronError> {
+    pub async fn connect(socket_path: &str) -> Result<Self, VynkorError> {
         Self::connect_inner(socket_path, None).await
     }
 
@@ -188,14 +188,14 @@ impl VeyronClient {
     pub async fn connect_with_secret(
         socket_path: &str,
         secret: &[u8],
-    ) -> Result<Self, VeyronError> {
+    ) -> Result<Self, VynkorError> {
         Self::connect_inner(socket_path, Some(secret.to_vec())).await
     }
 
     /// Connect using the standard environment:
     /// `VYN_SOCKET_PATH` (falls back to the per-user default path) and
     /// `VYN_JWT_SECRET` (optional; enables frame MACs when set).
-    pub async fn connect_from_env() -> Result<Self, VeyronError> {
+    pub async fn connect_from_env() -> Result<Self, VynkorError> {
         let socket_path = std::env::var("VYN_SOCKET_PATH")
             .unwrap_or_else(|_| vynkor_wire::socket::default_socket_path());
         match std::env::var("VYN_JWT_SECRET") {
@@ -222,14 +222,14 @@ impl VeyronClient {
     /// Connect to the kernel's WebSocket gateway (D-05). `url` is a
     /// `ws://` or `wss://` endpoint, normally `ws://<host>:<port>/ws`.
     ///
-    /// The client always offers the `veyron` subprotocol (the gateway's
+    /// The client always offers the `vynkor` subprotocol (the gateway's
     /// handshake marker). `jwt_token`, when non-empty, is appended to it in
     /// the `Sec-WebSocket-Protocol: veyron, <jwt>` header — the gateway's
     /// only channel for the token; never put tokens in the URL, they leak
     /// into access logs. Pass the same token to
-    /// [`VeyronClient::register_full`]; a non-empty token is required on
+    /// [`VynkorClient::register_full`]; a non-empty token is required on
     /// secured kernels. `secret` enables frame MACs after registration,
-    /// exactly like [`VeyronClient::connect_with_secret`] on UDS.
+    /// exactly like [`VynkorClient::connect_with_secret`] on UDS.
     ///
     /// On a dropped connection the client is left in its last state; reconnect
     /// by calling `connect_ws` again and re-registering — the session key is
@@ -238,17 +238,17 @@ impl VeyronClient {
         url: &str,
         jwt_token: &str,
         secret: Option<&[u8]>,
-    ) -> Result<Self, VeyronError> {
+    ) -> Result<Self, VynkorError> {
         let mut req = url
             .into_client_request()
-            .map_err(|e| VeyronError::Internal(format!("invalid ws url: {e}")))?;
+            .map_err(|e| VynkorError::Internal(format!("invalid ws url: {e}")))?;
         let protocol = if jwt_token.is_empty() {
             "veyron".to_string()
         } else {
             format!("veyron, {jwt_token}")
         };
         let value = HeaderValue::from_str(&protocol)
-            .map_err(|e| VeyronError::Internal(format!("invalid jwt for ws header: {e}")))?;
+            .map_err(|e| VynkorError::Internal(format!("invalid jwt for ws header: {e}")))?;
         req.headers_mut().insert("sec-websocket-protocol", value);
         let (ws, _resp) = connect_async(req).await.map_err(ws_io_error)?;
         Ok(Self {
@@ -263,10 +263,10 @@ impl VeyronClient {
     async fn connect_inner(
         socket_path: &str,
         secret: Option<Vec<u8>>,
-    ) -> Result<Self, VeyronError> {
+    ) -> Result<Self, VynkorError> {
         let stream = UnixStream::connect(socket_path)
             .await
-            .map_err(VeyronError::Io)?;
+            .map_err(VynkorError::Io)?;
         Ok(Self::from_stream(stream, secret))
     }
 
@@ -282,7 +282,7 @@ impl VeyronClient {
         &mut self,
         plugin_id: &str,
         manifest: PluginManifest,
-    ) -> Result<PluginRegisterAck, VeyronError> {
+    ) -> Result<PluginRegisterAck, VynkorError> {
         self.register_with_token(plugin_id, manifest, "").await
     }
 
@@ -294,7 +294,7 @@ impl VeyronClient {
         plugin_id: &str,
         manifest: PluginManifest,
         jwt_token: &str,
-    ) -> Result<PluginRegisterAck, VeyronError> {
+    ) -> Result<PluginRegisterAck, VynkorError> {
         self.register_full(plugin_id, "1.0.0", manifest, jwt_token)
             .await
     }
@@ -306,7 +306,7 @@ impl VeyronClient {
         version: &str,
         manifest: PluginManifest,
         jwt_token: &str,
-    ) -> Result<PluginRegisterAck, VeyronError> {
+    ) -> Result<PluginRegisterAck, VynkorError> {
         let env = Envelope {
             payload: Some(envelope::Payload::PluginRegister(PluginRegister {
                 plugin_id: plugin_id.to_string(),
@@ -329,11 +329,11 @@ impl VeyronClient {
                 }
                 Ok(ack)
             }
-            Some(envelope::Payload::Error(err)) => Err(VeyronError::Internal(format!(
+            Some(envelope::Payload::Error(err)) => Err(VynkorError::Internal(format!(
                 "registration rejected: {} ({})",
                 err.message, err.details
             ))),
-            _ => Err(VeyronError::Internal("expected PluginRegisterAck".into())),
+            _ => Err(VynkorError::Internal("expected PluginRegisterAck".into())),
         }
     }
 
@@ -341,18 +341,18 @@ impl VeyronClient {
 
     /// Encode and send a Protobuf [`Envelope`] to `target` ("kernel" or a
     /// peer plugin id).
-    pub async fn send(&mut self, target: &str, envelope: Envelope) -> Result<(), VeyronError> {
+    pub async fn send(&mut self, target: &str, envelope: Envelope) -> Result<(), VynkorError> {
         let mut payload = Vec::new();
         envelope
             .encode(&mut payload)
-            .map_err(|_| VeyronError::Internal("encode failed".into()))?;
+            .map_err(|_| VynkorError::Internal("encode failed".into()))?;
         self.send_raw(target, payload).await
     }
 
     /// Send a pre-encoded payload. Applies MAC when secured; on the UDS path
     /// payloads ≥ 64 KiB are transparently zstd-compressed by the framing
     /// layer (the WS path never compresses — see [`Transport`]).
-    pub async fn send_raw(&mut self, target: &str, payload: Vec<u8>) -> Result<(), VeyronError> {
+    pub async fn send_raw(&mut self, target: &str, payload: Vec<u8>) -> Result<(), VynkorError> {
         self.send_raw_with_flags(target, 0, payload).await
     }
 
@@ -363,7 +363,7 @@ impl VeyronClient {
         target: &str,
         extra_flags: u16,
         payload: Vec<u8>,
-    ) -> Result<(), VeyronError> {
+    ) -> Result<(), VynkorError> {
         let base_flags = if self.session_key.is_some() {
             FLAG_MAC_PRESENT
         } else {
@@ -389,23 +389,23 @@ impl VeyronClient {
         target: &str,
         payload: &[u8],
         chunk_size: usize,
-    ) -> Result<(), VeyronError> {
+    ) -> Result<(), VynkorError> {
         if matches!(self.transport, Transport::Ws(_)) {
-            return Err(VeyronError::Internal(
+            return Err(VynkorError::Internal(
                 "fragmented frames are not supported over WebSocket (R5-03)".into(),
             ));
         }
         if payload.len() > MAX_PAYLOAD_SIZE {
-            return Err(VeyronError::PayloadTooLarge(payload.len()));
+            return Err(VynkorError::PayloadTooLarge(payload.len()));
         }
         if chunk_size == 0 || chunk_size + FRAG_HEADER_SIZE > MAX_PAYLOAD_SIZE {
-            return Err(VeyronError::Internal(format!(
+            return Err(VynkorError::Internal(format!(
                 "invalid fragment chunk_size: {chunk_size}"
             )));
         }
         let total = payload.len().div_ceil(chunk_size).max(1);
         if total > u16::MAX as usize {
-            return Err(VeyronError::Internal(format!(
+            return Err(VynkorError::Internal(format!(
                 "payload needs {total} fragments; max is {}",
                 u16::MAX
             )));
@@ -434,7 +434,7 @@ impl VeyronClient {
     /// connections, reassembles fragmented messages, and returns raw-binary
     /// frames as-is (check `frame.flags & FLAG_RAW_BINARY`). Compressed frames
     /// arrive already decompressed and normalized by the framing layer.
-    pub async fn recv_frame(&mut self) -> Result<Frame, VeyronError> {
+    pub async fn recv_frame(&mut self) -> Result<Frame, VynkorError> {
         loop {
             let frame = self.transport.read_frame().await?;
             self.verify_frame_mac(&frame)?;
@@ -449,27 +449,27 @@ impl VeyronClient {
     }
 
     /// Receive and decode the next Protobuf [`Envelope`]. Errors on raw-binary
-    /// frames; use [`VeyronClient::recv_frame`] when expecting audio.
-    pub async fn recv(&mut self) -> Result<Envelope, VeyronError> {
+    /// frames; use [`VynkorClient::recv_frame`] when expecting audio.
+    pub async fn recv(&mut self) -> Result<Envelope, VynkorError> {
         let frame = self.recv_frame().await?;
         if frame.flags & FLAG_RAW_BINARY != 0 {
-            return Err(VeyronError::Internal(
+            return Err(VynkorError::Internal(
                 "received raw-binary frame; use recv_frame() for audio".into(),
             ));
         }
-        Envelope::decode(frame.payload.as_ref()).map_err(VeyronError::Proto)
+        Envelope::decode(frame.payload.as_ref()).map_err(VynkorError::Proto)
     }
 
-    /// [`VeyronClient::recv`] bounded by `timeout`. Returns
-    /// [`VeyronError::Timeout`] if nothing arrives in time.
-    pub async fn recv_timeout(&mut self, timeout: Duration) -> Result<Envelope, VeyronError> {
+    /// [`VynkorClient::recv`] bounded by `timeout`. Returns
+    /// [`VynkorError::Timeout`] if nothing arrives in time.
+    pub async fn recv_timeout(&mut self, timeout: Duration) -> Result<Envelope, VynkorError> {
         match tokio::time::timeout(timeout, self.recv()).await {
             Ok(result) => result,
-            Err(_) => Err(VeyronError::Timeout),
+            Err(_) => Err(VynkorError::Timeout),
         }
     }
 
-    fn verify_frame_mac(&self, frame: &Frame) -> Result<(), VeyronError> {
+    fn verify_frame_mac(&self, frame: &Frame) -> Result<(), VynkorError> {
         if let Some(key) = &self.session_key {
             let valid = frame.flags & FLAG_MAC_PRESENT != 0
                 && match &frame.mac {
@@ -480,7 +480,7 @@ impl VeyronClient {
                     None => false,
                 };
             if !valid {
-                return Err(VeyronError::Internal(
+                return Err(VynkorError::Internal(
                     "frame MAC verification failed".into(),
                 ));
             }
@@ -491,15 +491,15 @@ impl VeyronClient {
     /// Buffer one fragment; returns the reassembled frame when the set is
     /// complete. Enforces the kernel's bounds and errors (instead of silently
     /// growing) on violations.
-    fn absorb_fragment(&mut self, frame: Frame) -> Result<Option<Frame>, VeyronError> {
+    fn absorb_fragment(&mut self, frame: Frame) -> Result<Option<Frame>, VynkorError> {
         // Prune stale sets first so an abandoned stream cannot pin memory.
         self.reassembly
             .retain(|_, buf| buf.first_seen.elapsed() < REASSEMBLY_TIMEOUT);
 
         let hdr = parse_frag_header(&frame.payload)
-            .ok_or_else(|| VeyronError::Internal("fragment header too short".into()))?;
+            .ok_or_else(|| VynkorError::Internal("fragment header too short".into()))?;
         if hdr.total == 0 || hdr.sequence >= hdr.total {
-            return Err(VeyronError::Internal(format!(
+            return Err(VynkorError::Internal(format!(
                 "invalid fragment header: seq {} / total {}",
                 hdr.sequence, hdr.total
             )));
@@ -507,12 +507,12 @@ impl VeyronClient {
         if let Some(existing) = self.reassembly.get(&hdr.stream_id) {
             if existing.total != hdr.total {
                 self.reassembly.remove(&hdr.stream_id);
-                return Err(VeyronError::Internal(
+                return Err(VynkorError::Internal(
                     "fragment total mismatch within stream".into(),
                 ));
             }
         } else if self.reassembly.len() >= MAX_REASSEMBLY_STREAMS {
-            return Err(VeyronError::Internal(
+            return Err(VynkorError::Internal(
                 "too many concurrent fragment streams".into(),
             ));
         }
@@ -536,7 +536,7 @@ impl VeyronClient {
         let new_total = entry.buffered_bytes - replaced_len + chunk.len();
         if new_total > MAX_PAYLOAD_SIZE {
             self.reassembly.remove(&hdr.stream_id);
-            return Err(VeyronError::PayloadTooLarge(MAX_PAYLOAD_SIZE + 1));
+            return Err(VynkorError::PayloadTooLarge(MAX_PAYLOAD_SIZE + 1));
         }
         entry.buffered_bytes = new_total;
         entry.fragments.insert(hdr.sequence, chunk);
@@ -563,7 +563,7 @@ impl VeyronClient {
     // ── Kernel requests ─────────────────────────────────────────────
 
     /// Subscribe to event types ("*" for all).
-    pub async fn subscribe(&mut self, event_types: Vec<String>) -> Result<(), VeyronError> {
+    pub async fn subscribe(&mut self, event_types: Vec<String>) -> Result<(), VynkorError> {
         let env = Envelope {
             payload: Some(envelope::Payload::Subscribe(Subscribe { event_types })),
             ..Default::default()
@@ -572,7 +572,7 @@ impl VeyronClient {
     }
 
     /// Unsubscribe from event types.
-    pub async fn unsubscribe(&mut self, event_types: Vec<String>) -> Result<(), VeyronError> {
+    pub async fn unsubscribe(&mut self, event_types: Vec<String>) -> Result<(), VynkorError> {
         let env = Envelope {
             payload: Some(envelope::Payload::Unsubscribe(Unsubscribe { event_types })),
             ..Default::default()
@@ -581,7 +581,7 @@ impl VeyronClient {
     }
 
     /// Acknowledge a delivered event so the kernel stops retrying it.
-    pub async fn ack_event(&mut self, event_id: &str) -> Result<(), VeyronError> {
+    pub async fn ack_event(&mut self, event_id: &str) -> Result<(), VynkorError> {
         let env = Envelope {
             payload: Some(envelope::Payload::EventAck(EventAck {
                 event_id: event_id.to_string(),
@@ -601,7 +601,7 @@ impl VeyronClient {
         event_type: &str,
         payload_json: &[u8],
         timeout_ms: u32,
-    ) -> Result<EventPublishAck, VeyronError> {
+    ) -> Result<EventPublishAck, VynkorError> {
         let env = Envelope {
             payload: Some(envelope::Payload::EventPublish(EventPublish {
                 event_type: event_type.to_string(),
@@ -620,13 +620,13 @@ impl VeyronClient {
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
-                return Err(VeyronError::Timeout);
+                return Err(VynkorError::Timeout);
             }
             let response = self.recv_timeout(remaining).await?;
             match response.payload {
                 Some(envelope::Payload::EventPublishAck(ack)) => return Ok(ack),
                 Some(envelope::Payload::Error(err)) => {
-                    return Err(VeyronError::Internal(format!(
+                    return Err(VynkorError::Internal(format!(
                         "kernel error: {} ({})",
                         err.message, err.details
                     )));
@@ -646,7 +646,7 @@ impl VeyronClient {
         action: &str,
         params_json: &[u8],
         timeout_ms: u32,
-    ) -> Result<ActionResponse, VeyronError> {
+    ) -> Result<ActionResponse, VynkorError> {
         let action_id = next_request_id("act");
         let env = Envelope {
             payload: Some(envelope::Payload::ActionRequest(ActionRequest {
@@ -670,7 +670,7 @@ impl VeyronClient {
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
-                return Err(VeyronError::Timeout);
+                return Err(VynkorError::Timeout);
             }
             let response = self.recv_timeout(remaining).await?;
             match response.payload {
@@ -680,13 +680,13 @@ impl VeyronClient {
                 Some(envelope::Payload::ActionStreamAbort(abort))
                     if abort.action_id == action_id =>
                 {
-                    return Err(VeyronError::Internal(format!(
+                    return Err(VynkorError::Internal(format!(
                         "stream aborted: {}",
                         abort.reason
                     )));
                 }
                 Some(envelope::Payload::Error(err)) => {
-                    return Err(VeyronError::Internal(format!(
+                    return Err(VynkorError::Internal(format!(
                         "kernel error: {} ({})",
                         err.message, err.details
                     )));
@@ -696,18 +696,18 @@ impl VeyronClient {
         }
     }
 
-    /// Like [`VeyronClient::send_action`] but for an action whose body will
-    /// be delivered incrementally via [`VeyronClient::send_request_chunk`]
+    /// Like [`VynkorClient::send_action`] but for an action whose body will
+    /// be delivered incrementally via [`VynkorClient::send_request_chunk`]
     /// rather than all at once in `params_json`. Returns the generated
     /// `action_id` immediately — this does NOT wait for an `ActionResponse`;
-    /// drive that separately via [`VeyronClient::recv`]/`recv_timeout`,
+    /// drive that separately via [`VynkorClient::recv`]/`recv_timeout`,
     /// matching on the same `action_id` (mirrors `send_action`'s own
     /// single-task-drives-request/response convention).
     pub async fn send_action_streaming(
         &mut self,
         action: &str,
         timeout_ms: u32,
-    ) -> Result<String, VeyronError> {
+    ) -> Result<String, VynkorError> {
         let action_id = next_request_id("act");
         let env = Envelope {
             payload: Some(envelope::Payload::ActionRequest(ActionRequest {
@@ -725,7 +725,7 @@ impl VeyronClient {
     }
 
     /// Send one chunk of a streaming action's request body. `action_id` is
-    /// the id returned by [`VeyronClient::send_action_streaming`]. Set
+    /// the id returned by [`VynkorClient::send_action_streaming`]. Set
     /// `is_final` on the last chunk.
     pub async fn send_request_chunk(
         &mut self,
@@ -733,7 +733,7 @@ impl VeyronClient {
         seq: u32,
         chunk: Vec<u8>,
         is_final: bool,
-    ) -> Result<(), VeyronError> {
+    ) -> Result<(), VynkorError> {
         let env = Envelope {
             payload: Some(envelope::Payload::ActionRequestChunk(ActionRequestChunk {
                 action_id: action_id.to_string(),
@@ -756,7 +756,7 @@ impl VeyronClient {
         action_id: &str,
         seq: u32,
         chunk: Vec<u8>,
-    ) -> Result<(), VeyronError> {
+    ) -> Result<(), VynkorError> {
         let env = Envelope {
             payload: Some(envelope::Payload::ActionResponseChunk(
                 ActionResponseChunk {
@@ -773,8 +773,8 @@ impl VeyronClient {
     /// R6-04: gracefully close a long-lived streaming session. `action_id`
     /// is whichever id this side already uses to address the session — the
     /// original `action_id` on the requester side (same as
-    /// [`VeyronClient::send_request_chunk`]), or the kernel-internal id on
-    /// the provider side (same as [`VeyronClient::send_response_chunk`]).
+    /// [`VynkorClient::send_request_chunk`]), or the kernel-internal id on
+    /// the provider side (same as [`VynkorClient::send_response_chunk`]).
     /// The kernel forwards this to the other peer and evicts the session;
     /// only valid after the session has been accepted (the provider's first
     /// `ActionResponse{status: ACTION_OK}`) — closing before that is
@@ -783,7 +783,7 @@ impl VeyronClient {
         &mut self,
         action_id: &str,
         reason: &str,
-    ) -> Result<(), VeyronError> {
+    ) -> Result<(), VynkorError> {
         let env = Envelope {
             payload: Some(envelope::Payload::SessionClose(SessionClose {
                 action_id: action_id.to_string(),
@@ -800,7 +800,7 @@ impl VeyronClient {
         command_id: &str,
         command: &str,
         params_json: &[u8],
-    ) -> Result<KernelCommandAck, VeyronError> {
+    ) -> Result<KernelCommandAck, VynkorError> {
         let env = Envelope {
             payload: Some(envelope::Payload::KernelCommand(KernelCommand {
                 command_id: command_id.to_string(),
@@ -813,12 +813,12 @@ impl VeyronClient {
         let response = self.recv().await?;
         match response.payload {
             Some(envelope::Payload::KernelCommandAck(ack)) => Ok(ack),
-            _ => Err(VeyronError::Internal("expected KernelCommandAck".into())),
+            _ => Err(VynkorError::Internal("expected KernelCommandAck".into())),
         }
     }
 
     /// Round-trip a Ping to the kernel; returns measured latency.
-    pub async fn ping(&mut self) -> Result<Duration, VeyronError> {
+    pub async fn ping(&mut self) -> Result<Duration, VynkorError> {
         let start = Instant::now();
         let env = Envelope {
             payload: Some(envelope::Payload::Ping(Ping {
@@ -830,7 +830,7 @@ impl VeyronClient {
         let response = self.recv().await?;
         match response.payload {
             Some(envelope::Payload::Pong(_)) => Ok(start.elapsed()),
-            _ => Err(VeyronError::Internal("expected Pong".into())),
+            _ => Err(VynkorError::Internal("expected Pong".into())),
         }
     }
 
@@ -842,7 +842,7 @@ impl VeyronClient {
         &mut self,
         target: &str,
         chunk: AudioStreamChunk,
-    ) -> Result<(), VeyronError> {
+    ) -> Result<(), VynkorError> {
         let env = Envelope {
             payload: Some(envelope::Payload::AudioStreamChunk(chunk)),
             ..Default::default()
@@ -852,9 +852,9 @@ impl VeyronClient {
 
     /// Send raw audio bytes (PCM_S16LE or Opus) with `FLAG_RAW_BINARY`; the
     /// router skips Protobuf decode. Stream metadata must be negotiated first
-    /// via [`VeyronClient::send_audio_chunk`]. Requires
+    /// via [`VynkorClient::send_audio_chunk`]. Requires
     /// `PERMISSION_AUDIO_STREAM`. Raw-binary payloads are never compressed.
-    pub async fn send_raw_audio(&mut self, target: &str, data: Vec<u8>) -> Result<(), VeyronError> {
+    pub async fn send_raw_audio(&mut self, target: &str, data: Vec<u8>) -> Result<(), VynkorError> {
         self.send_raw_with_flags(target, FLAG_RAW_BINARY, data)
             .await
     }

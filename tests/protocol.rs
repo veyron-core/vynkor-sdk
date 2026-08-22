@@ -18,7 +18,7 @@ use vynkor_sdk::proto::{
     envelope, ActionRequest, ActionStatus, ActionStreamAbort, Envelope, Event, Ping,
     PluginManifest, PluginRegisterAck, PluginShutdown, SessionClose,
 };
-use vynkor_sdk::{Plugin, VeyronClient, VeyronError};
+use vynkor_sdk::{Plugin, VynkorClient, VynkorError};
 
 fn envelope_with_event(event_id: &str) -> Envelope {
     Envelope {
@@ -39,8 +39,8 @@ fn decode(frame: &Frame) -> Envelope {
 #[tokio::test]
 async fn send_recv_roundtrip() {
     let (a, b) = UnixStream::pair().unwrap();
-    let mut client = VeyronClient::from_stream(a, None);
-    let mut peer = VeyronClient::from_stream(b, None);
+    let mut client = VynkorClient::from_stream(a, None);
+    let mut peer = VynkorClient::from_stream(b, None);
 
     client
         .send("kernel", envelope_with_event("evt-1"))
@@ -56,7 +56,7 @@ async fn send_recv_roundtrip() {
 #[tokio::test]
 async fn large_payload_is_compressed_on_wire_and_normalized_on_read() {
     let (a, mut b) = UnixStream::pair().unwrap();
-    let mut client = VeyronClient::from_stream(a, None);
+    let mut client = VynkorClient::from_stream(a, None);
 
     // Highly compressible payload above the threshold.
     let payload = vec![0x42u8; COMPRESS_THRESHOLD + 1024];
@@ -83,7 +83,7 @@ async fn mac_secured_registration_and_tagged_frames() {
     let plugin_id = "mac-plugin";
 
     let (a, mut kernel_side) = UnixStream::pair().unwrap();
-    let mut client = VeyronClient::from_stream(a, Some(secret.to_vec()));
+    let mut client = VynkorClient::from_stream(a, Some(secret.to_vec()));
 
     // Fake kernel: read the register frame, reply with an ack carrying a nonce.
     let nonce_clone = nonce.clone();
@@ -145,7 +145,7 @@ async fn mac_secured_registration_and_tagged_frames() {
 async fn recv_rejects_untagged_frame_when_secured() {
     let secret = b"s3cret";
     let (a, mut kernel_side) = UnixStream::pair().unwrap();
-    let mut client = VeyronClient::from_stream(a, Some(secret.to_vec()));
+    let mut client = VynkorClient::from_stream(a, Some(secret.to_vec()));
 
     let kernel = tokio::spawn(async move {
         let _reg = read_frame(&mut kernel_side).await.unwrap();
@@ -201,8 +201,8 @@ async fn recv_rejects_untagged_frame_when_secured() {
 #[tokio::test]
 async fn fragmentation_roundtrip_via_client_recv() {
     let (a, b) = UnixStream::pair().unwrap();
-    let mut sender = VeyronClient::from_stream(a, None);
-    let mut receiver = VeyronClient::from_stream(b, None);
+    let mut sender = VynkorClient::from_stream(a, None);
+    let mut receiver = VynkorClient::from_stream(b, None);
 
     // A payload that needs several fragments at a small chunk size.
     let mut inner = Vec::new();
@@ -225,7 +225,7 @@ async fn fragmentation_roundtrip_via_client_recv() {
 #[tokio::test]
 async fn fragment_wire_format_matches_framing_doc() {
     let (a, mut b) = UnixStream::pair().unwrap();
-    let mut sender = VeyronClient::from_stream(a, None);
+    let mut sender = VynkorClient::from_stream(a, None);
 
     let payload = vec![9u8; 25]; // 3 fragments of 10 + header each
     let send = tokio::spawn(async move {
@@ -247,20 +247,20 @@ async fn fragment_wire_format_matches_framing_doc() {
 #[tokio::test]
 async fn send_fragmented_rejects_oversized_payload() {
     let (a, _b) = UnixStream::pair().unwrap();
-    let mut sender = VeyronClient::from_stream(a, None);
+    let mut sender = VynkorClient::from_stream(a, None);
     let payload = vec![0u8; MAX_PAYLOAD_SIZE + 1];
     let err = sender
         .send_fragmented("peer", &payload, 65536)
         .await
         .expect_err("oversized payload accepted");
-    assert!(matches!(err, VeyronError::PayloadTooLarge(_)));
+    assert!(matches!(err, VynkorError::PayloadTooLarge(_)));
 }
 
 #[tokio::test]
 async fn raw_binary_frame_bypasses_protobuf() {
     let (a, b) = UnixStream::pair().unwrap();
-    let mut sender = VeyronClient::from_stream(a, None);
-    let mut receiver = VeyronClient::from_stream(b, None);
+    let mut sender = VynkorClient::from_stream(a, None);
+    let mut receiver = VynkorClient::from_stream(b, None);
 
     let pcm = vec![0x01u8, 0x02, 0x03, 0x04];
     sender.send_raw_audio("peer", pcm.clone()).await.unwrap();
@@ -273,8 +273,8 @@ async fn raw_binary_frame_bypasses_protobuf() {
 #[tokio::test]
 async fn recv_errors_on_raw_binary_frame() {
     let (a, b) = UnixStream::pair().unwrap();
-    let mut sender = VeyronClient::from_stream(a, None);
-    let mut receiver = VeyronClient::from_stream(b, None);
+    let mut sender = VynkorClient::from_stream(a, None);
+    let mut receiver = VynkorClient::from_stream(b, None);
 
     sender.send_raw_audio("peer", vec![1, 2, 3]).await.unwrap();
     let err = receiver.recv().await.expect_err("raw frame decoded");
@@ -284,12 +284,12 @@ async fn recv_errors_on_raw_binary_frame() {
 #[tokio::test]
 async fn recv_timeout_returns_timeout_error() {
     let (a, _b) = UnixStream::pair().unwrap();
-    let mut client = VeyronClient::from_stream(a, None);
+    let mut client = VynkorClient::from_stream(a, None);
     let err = client
         .recv_timeout(Duration::from_millis(50))
         .await
         .expect_err("recv returned without traffic");
-    assert!(matches!(err, VeyronError::Timeout));
+    assert!(matches!(err, VynkorError::Timeout));
 }
 
 #[test]
@@ -331,21 +331,21 @@ impl Plugin for TestPlugin {
         PluginManifest::default()
     }
 
-    async fn on_init(&mut self, _client: &mut VeyronClient) -> Result<(), VeyronError> {
+    async fn on_init(&mut self, _client: &mut VynkorClient) -> Result<(), VynkorError> {
         self.init_called = true;
         Ok(())
     }
 
-    async fn on_event(&mut self, event: Event) -> Result<Option<Envelope>, VeyronError> {
+    async fn on_event(&mut self, event: Event) -> Result<Option<Envelope>, VynkorError> {
         self.events_seen.push(event.event_id);
         Ok(None)
     }
 
-    async fn on_message(&mut self, _env: Envelope) -> Result<Option<Envelope>, VeyronError> {
+    async fn on_message(&mut self, _env: Envelope) -> Result<Option<Envelope>, VynkorError> {
         Ok(None)
     }
 
-    async fn on_shutdown(&mut self) -> Result<(), VeyronError> {
+    async fn on_shutdown(&mut self) -> Result<(), VynkorError> {
         self.shutdown_called = true;
         Ok(())
     }
@@ -354,7 +354,7 @@ impl Plugin for TestPlugin {
 #[tokio::test]
 async fn plugin_serve_loop_handles_ping_event_and_shutdown() {
     let (a, mut kernel_side) = UnixStream::pair().unwrap();
-    let client = VeyronClient::from_stream(a, None);
+    let client = VynkorClient::from_stream(a, None);
 
     let kernel = tokio::spawn(async move {
         // Registration → ack.
@@ -469,11 +469,11 @@ impl Plugin for FailingPlugin {
         PluginManifest::default()
     }
 
-    async fn on_message(&mut self, _env: Envelope) -> Result<Option<Envelope>, VeyronError> {
-        Err(VeyronError::Timeout)
+    async fn on_message(&mut self, _env: Envelope) -> Result<Option<Envelope>, VynkorError> {
+        Err(VynkorError::Timeout)
     }
 
-    async fn on_shutdown(&mut self) -> Result<(), VeyronError> {
+    async fn on_shutdown(&mut self) -> Result<(), VynkorError> {
         self.shutdown_called = true;
         Ok(())
     }
@@ -482,7 +482,7 @@ impl Plugin for FailingPlugin {
 #[tokio::test]
 async fn plugin_serve_propagates_on_message_handler_error() {
     let (a, mut kernel_side) = UnixStream::pair().unwrap();
-    let client = VeyronClient::from_stream(a, None);
+    let client = VynkorClient::from_stream(a, None);
 
     let kernel = tokio::spawn(async move {
         let _reg = read_frame(&mut kernel_side).await.unwrap();
@@ -540,7 +540,7 @@ async fn plugin_serve_propagates_on_message_handler_error() {
         .expect("serve loop did not exit after handler error");
 
     assert!(
-        matches!(result, Err(VeyronError::Timeout)),
+        matches!(result, Err(VynkorError::Timeout)),
         "handler error must propagate out of serve(), got {result:?}"
     );
     assert!(
@@ -553,7 +553,7 @@ async fn plugin_serve_propagates_on_message_handler_error() {
 #[tokio::test]
 async fn send_action_streaming_sets_streaming_flag_and_returns_action_id() {
     let (a, mut b) = UnixStream::pair().unwrap();
-    let mut client = VeyronClient::from_stream(a, None);
+    let mut client = VynkorClient::from_stream(a, None);
 
     let action_id = client.send_action_streaming("upload", 5000).await.unwrap();
     assert!(action_id.starts_with("act-"));
@@ -575,7 +575,7 @@ async fn send_action_streaming_sets_streaming_flag_and_returns_action_id() {
 #[tokio::test]
 async fn send_request_chunk_and_send_response_chunk_roundtrip() {
     let (a, mut b) = UnixStream::pair().unwrap();
-    let mut client = VeyronClient::from_stream(a, None);
+    let mut client = VynkorClient::from_stream(a, None);
 
     client
         .send_request_chunk("act-1", 0, b"hello".to_vec(), false)
@@ -616,7 +616,7 @@ async fn send_request_chunk_and_send_response_chunk_roundtrip() {
 #[tokio::test]
 async fn send_action_returns_error_when_stream_aborted_for_its_action_id() {
     let (a, mut b) = UnixStream::pair().unwrap();
-    let mut client = VeyronClient::from_stream(a, None);
+    let mut client = VynkorClient::from_stream(a, None);
 
     let send_fut = tokio::spawn(async move { client.send_action("upload", b"{}", 2000).await });
 
@@ -653,7 +653,7 @@ async fn send_action_returns_error_when_stream_aborted_for_its_action_id() {
 
     let err = send_fut.await.unwrap().expect_err("expected an error");
     match err {
-        VeyronError::Internal(msg) => {
+        VynkorError::Internal(msg) => {
             assert!(msg.contains("receiver backpressure"), "got: {msg}");
         }
         other => panic!("expected Internal error, got {other:?}"),
@@ -663,7 +663,7 @@ async fn send_action_returns_error_when_stream_aborted_for_its_action_id() {
 #[tokio::test]
 async fn close_session_sends_session_close_envelope() {
     let (a, mut b) = UnixStream::pair().unwrap();
-    let mut client = VeyronClient::from_stream(a, None);
+    let mut client = VynkorClient::from_stream(a, None);
 
     client.close_session("act-1", "done").await.unwrap();
 
@@ -683,7 +683,7 @@ async fn close_session_sends_session_close_envelope() {
 #[tokio::test]
 async fn recv_distinguishes_session_close_from_stream_abort() {
     let (a, mut b) = UnixStream::pair().unwrap();
-    let mut client = VeyronClient::from_stream(a, None);
+    let mut client = VynkorClient::from_stream(a, None);
 
     // Inbound SessionClose (peer closed cleanly).
     let close_env = Envelope {
@@ -792,8 +792,8 @@ impl ConcurrentHandler for TestConcurrentHandler {
 #[tokio::test]
 async fn concurrent_loop_handles_burst_and_ping_and_shutdown() {
     let (plugin_side, kernel_side) = UnixStream::pair().unwrap();
-    let client = VeyronClient::from_stream(plugin_side, None);
-    let mut kernel = VeyronClient::from_stream(kernel_side, None);
+    let client = VynkorClient::from_stream(plugin_side, None);
+    let mut kernel = VynkorClient::from_stream(kernel_side, None);
     let handler = Arc::new(TestConcurrentHandler);
 
     let loop_task = tokio::spawn(run_concurrent_loop(client, handler));
@@ -897,8 +897,8 @@ async fn concurrent_loop_handles_burst_and_ping_and_shutdown() {
 #[tokio::test]
 async fn concurrent_loop_turns_handler_panic_into_action_error() {
     let (plugin_side, kernel_side) = UnixStream::pair().unwrap();
-    let client = VeyronClient::from_stream(plugin_side, None);
-    let mut kernel = VeyronClient::from_stream(kernel_side, None);
+    let client = VynkorClient::from_stream(plugin_side, None);
+    let mut kernel = VynkorClient::from_stream(kernel_side, None);
     let handler = Arc::new(TestConcurrentHandler);
 
     let loop_task = tokio::spawn(run_concurrent_loop(client, handler));

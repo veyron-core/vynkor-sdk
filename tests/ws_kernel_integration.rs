@@ -3,9 +3,9 @@
 //! registers, and round-trips actions").
 //!
 //! Requires a built `vyn` binary. Located via `VYN_BIN`, falling back to
-//! the sibling checkout `../veyron/target/{debug,release}/vyn`. When no
+//! the sibling checkout `../vynkor/target/{debug,release}/vyn`. When no
 //! binary exists the tests skip with a note — build the kernel first
-//! (`cargo build --manifest-path ../veyron/Cargo.toml`).
+//! (`cargo build --manifest-path ../vynkor/Cargo.toml`).
 
 use prost::Message;
 use std::path::PathBuf;
@@ -18,7 +18,7 @@ use vynkor_sdk::frame_mac::compute_tag;
 use vynkor_sdk::proto::{
     envelope, ActionRequest, ActionResponse, ActionStatus, Envelope, PluginManifest,
 };
-use vynkor_sdk::{VeyronClient, VeyronError};
+use vynkor_sdk::{VynkorClient, VynkorError};
 
 const WS_GATEWAY: &str = "/ws";
 const SECRET_32: &[u8; 32] = b"0123456789abcdef0123456789abcdef";
@@ -27,7 +27,7 @@ fn kernel_bin() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("VYN_BIN") {
         return Some(PathBuf::from(p));
     }
-    ["../veyron/target/debug/vyn", "../veyron/target/release/vyn"]
+    ["../vynkor/target/debug/vyn", "../vynkor/target/release/vyn"]
         .iter()
         .map(PathBuf::from)
         .find(|p| p.exists())
@@ -47,7 +47,7 @@ async fn free_port() -> u16 {
 /// Start a real kernel binary with the WS gateway on an ephemeral port.
 async fn spawn_kernel(bin: PathBuf, jwt_secret: Option<&str>) -> KernelProc {
     let port = free_port().await;
-    let dir = std::env::temp_dir().join(format!("veyron_ws_it_{}_{port}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("vynkor_ws_it_{}_{port}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let dir = dir.to_string_lossy().into_owned();
 
@@ -85,9 +85,9 @@ async fn spawn_kernel(bin: PathBuf, jwt_secret: Option<&str>) -> KernelProc {
     }
 }
 
-async fn connect_ws_retry(url: &str, token: &str, secret: Option<&[u8]>) -> VeyronClient {
+async fn connect_ws_retry(url: &str, token: &str, secret: Option<&[u8]>) -> VynkorClient {
     for attempt in 0..100 {
-        match VeyronClient::connect_ws(url, token, secret).await {
+        match VynkorClient::connect_ws(url, token, secret).await {
             Ok(client) => return client,
             Err(e) if attempt < 99 => {
                 let _ = e;
@@ -148,7 +148,7 @@ fn b64url(data: &[u8]) -> String {
 #[tokio::test]
 async fn ws_sdk_plugin_registers_and_roundtrips_action() {
     let Some(bin) = kernel_bin() else {
-        eprintln!("skipping: vyn binary not found — set VYN_BIN or build ../veyron first");
+        eprintln!("skipping: vyn binary not found — set VYN_BIN or build ../vynkor first");
         return;
     };
     let kernel = spawn_kernel(bin, None).await;
@@ -261,7 +261,7 @@ async fn ws_sdk_plugin_registers_and_roundtrips_action() {
 #[tokio::test]
 async fn ws_sdk_secured_jwt_and_mac_roundtrip() {
     let Some(bin) = kernel_bin() else {
-        eprintln!("skipping: vyn binary not found — set VYN_BIN or build ../veyron first");
+        eprintln!("skipping: vyn binary not found — set VYN_BIN or build ../vynkor first");
         return;
     };
     let kernel = spawn_kernel(bin, Some(std::str::from_utf8(SECRET_32).unwrap())).await;
@@ -291,12 +291,12 @@ async fn ws_sdk_secured_jwt_and_mac_roundtrip() {
     // A bad token must be rejected at the WS handshake.
     let rejected = timeout(
         Duration::from_secs(2),
-        VeyronClient::connect_ws(&url, "garbage-token", Some(SECRET_32)),
+        VynkorClient::connect_ws(&url, "garbage-token", Some(SECRET_32)),
     )
     .await
     .expect("rejected handshake must not hang");
     assert!(
-        matches!(rejected, Err(VeyronError::Io(_))),
+        matches!(rejected, Err(VynkorError::Io(_))),
         "bad token must fail the handshake"
     );
 }

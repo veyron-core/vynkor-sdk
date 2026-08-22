@@ -4,10 +4,10 @@
 
 #![allow(async_fn_in_trait)]
 
-use crate::client::VeyronClient;
+use crate::client::VynkorClient;
 use std::env;
 use vynkor_wire::proto::veyron::{envelope, Envelope, Event, PluginManifest, Pong};
-use vynkor_wire::WireError as VeyronError;
+use vynkor_wire::WireError as VynkorError;
 
 fn unix_millis() -> u64 {
     std::time::SystemTime::now()
@@ -16,7 +16,7 @@ fn unix_millis() -> u64 {
         .unwrap_or(0)
 }
 
-/// A Veyron plugin. Only [`Plugin::id`], [`Plugin::manifest`] and
+/// A Vynkor plugin. Only [`Plugin::id`], [`Plugin::manifest`] and
 /// [`Plugin::on_message`] are mandatory; everything else has a sensible
 /// default.
 ///
@@ -48,7 +48,7 @@ pub trait Plugin {
 
     /// Called once after successful registration, before the receive loop.
     /// Use the client to subscribe, negotiate audio streams, etc.
-    async fn on_init(&mut self, client: &mut VeyronClient) -> Result<(), VeyronError> {
+    async fn on_init(&mut self, client: &mut VynkorClient) -> Result<(), VynkorError> {
         let _ = client;
         Ok(())
     }
@@ -56,19 +56,19 @@ pub trait Plugin {
     /// Called for every inbound envelope not handled by the SDK
     /// (Ping/Pong, PluginShutdown and Event have dedicated handling).
     /// Return `Ok(Some(reply))` to send a response back to the kernel.
-    async fn on_message(&mut self, envelope: Envelope) -> Result<Option<Envelope>, VeyronError>;
+    async fn on_message(&mut self, envelope: Envelope) -> Result<Option<Envelope>, VynkorError>;
 
     /// Called for each delivered [`Event`]. Returning `Ok(..)` makes the SDK
     /// send an `EventAck` so the kernel stops retrying. Return a reply
     /// envelope to send additional traffic.
-    async fn on_event(&mut self, event: Event) -> Result<Option<Envelope>, VeyronError> {
+    async fn on_event(&mut self, event: Event) -> Result<Option<Envelope>, VynkorError> {
         let _ = event;
         Ok(None)
     }
 
     /// Called once when the receive loop ends (kernel shutdown request,
     /// disconnect, or handler error).
-    async fn on_shutdown(&mut self) -> Result<(), VeyronError> {
+    async fn on_shutdown(&mut self) -> Result<(), VynkorError> {
         Ok(())
     }
 
@@ -76,7 +76,7 @@ pub trait Plugin {
     /// `VYN_SOCKET_PATH`, falling back to the same per-user resolution as
     /// the kernel (XDG_RUNTIME_DIR → /run/user/{uid} → ~/.local/state/vyn/run). Never
     /// the world-writable shared /tmp (BUG-006).
-    async fn run(&mut self) -> Result<(), VeyronError> {
+    async fn run(&mut self) -> Result<(), VynkorError> {
         let socket_path = env::var("VYN_SOCKET_PATH")
             .unwrap_or_else(|_| vynkor_wire::socket::default_socket_path());
         self.run_with(&socket_path).await
@@ -84,12 +84,12 @@ pub trait Plugin {
 
     /// [`Plugin::run`] against an explicit socket path. JWT credentials are
     /// still read from `VYN_JWT_TOKEN` / `VYN_JWT_SECRET` when present.
-    async fn run_with(&mut self, socket_path: &str) -> Result<(), VeyronError> {
+    async fn run_with(&mut self, socket_path: &str) -> Result<(), VynkorError> {
         let token = env::var("VYN_JWT_TOKEN").unwrap_or_default();
         let secret = env::var("VYN_JWT_SECRET").ok().filter(|s| !s.is_empty());
         let client = match secret {
-            Some(s) => VeyronClient::connect_with_secret(socket_path, s.as_bytes()).await?,
-            None => VeyronClient::connect(socket_path).await?,
+            Some(s) => VynkorClient::connect_with_secret(socket_path, s.as_bytes()).await?,
+            None => VynkorClient::connect(socket_path).await?,
         };
         self.serve(client, &token).await
     }
@@ -100,12 +100,12 @@ pub trait Plugin {
     /// (`VYN_JWT_TOKEN` / `VYN_JWT_SECRET`); the token is presented both
     /// in the `Sec-WebSocket-Protocol` handshake header and in the
     /// registration envelope.
-    async fn run_ws(&mut self, url: &str) -> Result<(), VeyronError> {
+    async fn run_ws(&mut self, url: &str) -> Result<(), VynkorError> {
         let token = env::var("VYN_JWT_TOKEN").unwrap_or_default();
         let secret = env::var("VYN_JWT_SECRET").ok().filter(|s| !s.is_empty());
         let client = match &secret {
-            Some(s) => VeyronClient::connect_ws(url, &token, Some(s.as_bytes())).await?,
-            None => VeyronClient::connect_ws(url, &token, None).await?,
+            Some(s) => VynkorClient::connect_ws(url, &token, Some(s.as_bytes())).await?,
+            None => VynkorClient::connect_ws(url, &token, None).await?,
         };
         self.serve(client, &token).await
     }
@@ -114,14 +114,14 @@ pub trait Plugin {
     /// block for [`Plugin::run`]; also useful in tests.
     async fn serve(
         &mut self,
-        mut client: VeyronClient,
+        mut client: VynkorClient,
         jwt_token: &str,
-    ) -> Result<(), VeyronError> {
+    ) -> Result<(), VynkorError> {
         let ack = client
             .register_full(self.id(), self.version(), self.manifest(), jwt_token)
             .await?;
         if !ack.accepted {
-            return Err(VeyronError::PermissionDenied(format!(
+            return Err(VynkorError::PermissionDenied(format!(
                 "registration rejected: {}",
                 ack.reject_reason
             )));
@@ -135,7 +135,7 @@ pub trait Plugin {
         // here so it propagates out of `serve()` after `on_shutdown()` runs,
         // instead of being silently swallowed by the `break` (T-07: Rust SDK
         // was the only one of the three not surfacing this to the caller).
-        let mut handler_err: Option<VeyronError> = None;
+        let mut handler_err: Option<VynkorError> = None;
         loop {
             let env = match client.recv().await {
                 Ok(env) => env,
