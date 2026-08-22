@@ -112,7 +112,7 @@ async fn main() -> Result<(), VynkorError> {
 ```
 
 JWT credentials come from the same env vars as the UDS path — the token is
-presented both in the `Sec-WebSocket-Protocol: veyron, <jwt>` handshake header
+presented both in the `Sec-WebSocket-Protocol: vynkor, <jwt>` handshake header
 and in the registration envelope. Registration, frame-MAC enable and reconnect
 behave exactly like the UDS client. Two differences are dictated by the
 gateway (R5-03): outbound frames are never zstd-compressed and never

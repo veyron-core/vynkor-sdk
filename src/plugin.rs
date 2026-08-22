@@ -6,7 +6,7 @@
 
 use crate::client::VynkorClient;
 use std::env;
-use vynkor_wire::proto::veyron::{envelope, Envelope, Event, PluginManifest, Pong};
+use vynkor_wire::proto::vynkor::{envelope, Envelope, Event, PluginManifest, Pong};
 use vynkor_wire::WireError as VynkorError;
 
 fn unix_millis() -> u64 {

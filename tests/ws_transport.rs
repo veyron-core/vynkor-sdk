@@ -37,14 +37,14 @@ async fn spawn_listener() -> (u16, TcpListener) {
 }
 
 /// Upgrade a TCP stream to WS, selecting the `vynkor` subprotocol like the
-/// real gateway (axum `ws.protocols(["veyron"])`) so the client's offer is
+/// real gateway (axum `ws.protocols(["vynkor"])`) so the client's offer is
 /// accepted.
 #[allow(clippy::result_large_err)] // tungstenite::Error embeds a Response
 async fn accept_ws_stream(stream: TcpStream) -> FakeWs {
     use tokio_tungstenite::tungstenite::http::{header, Request, Response};
     accept_hdr_async(stream, |_req: &Request<()>, mut resp: Response<()>| {
         resp.headers_mut()
-            .insert(header::SEC_WEBSOCKET_PROTOCOL, "veyron".parse().unwrap());
+            .insert(header::SEC_WEBSOCKET_PROTOCOL, "vynkor".parse().unwrap());
         Ok(resp)
     })
     .await
