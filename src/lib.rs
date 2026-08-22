@@ -84,7 +84,7 @@ pub use vynkor_wire::WireError as VynkorError;
 pub use vynkor_wire::mac as frame_mac;
 
 /// Generated Protobuf types for the Vynkor protocol
-/// (`wire/proto/veyron_protocol.proto`).
+/// (`wire/proto/vynkor_protocol.proto`).
 pub mod proto {
     pub use vynkor_wire::proto::vynkor::*;
 }
