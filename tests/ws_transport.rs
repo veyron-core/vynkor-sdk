@@ -11,14 +11,14 @@ use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::tungstenite::protocol::Message as WsMessage;
 use tokio_tungstenite::{accept_hdr_async, WebSocketStream};
-use veyron_sdk::frame_mac::{compute_tag, derive_session_key, verify_tag};
-use veyron_sdk::framing::{
+use vynkor_sdk::frame_mac::{compute_tag, derive_session_key, verify_tag};
+use vynkor_sdk::framing::{
     read_frame, serialize_header, Frame, COMPRESS_THRESHOLD, FLAG_MAC_PRESENT, FLAG_RAW_BINARY,
 };
-use veyron_sdk::proto::{
+use vynkor_sdk::proto::{
     envelope, ActionResponse, ActionStatus, Envelope, Ping, PluginManifest, PluginRegisterAck, Pong,
 };
-use veyron_sdk::{VeyronClient, VeyronError};
+use vynkor_sdk::{VeyronClient, VeyronError};
 
 const FAKE_SECRET: &[u8] = b"ws-fake-secret-32-bytes-minimum";
 const NONCE: &[u8; 16] = b"0123456789abcdef";
@@ -272,7 +272,7 @@ async fn ws_large_payload_is_not_compressed_on_wire() {
         // R5-03: the gateway rejects FLAG_COMPRESSED inbound, so the WS
         // transport must never compress — even past the UDS threshold.
         let frame = read_ws_frame(&mut ws).await;
-        assert_eq!(frame.flags & veyron_sdk::framing::FLAG_COMPRESSED, 0);
+        assert_eq!(frame.flags & vynkor_sdk::framing::FLAG_COMPRESSED, 0);
         assert_eq!(frame.length as usize, expected.len());
         assert_eq!(&*frame.payload, expected);
     });

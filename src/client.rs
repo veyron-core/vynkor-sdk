@@ -43,17 +43,17 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
 use tokio_tungstenite::tungstenite::protocol::Message as WsMessage;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
-use veyron_wire::framing::{
+use vynkor_wire::framing::{
     parse_frag_header, serialize_header, write_frame_raw, FRAG_HEADER_SIZE, MAX_PAYLOAD_SIZE,
 };
-use veyron_wire::mac::{compute_tag, derive_session_key, verify_tag};
-use veyron_wire::proto::veyron::{
+use vynkor_wire::mac::{compute_tag, derive_session_key, verify_tag};
+use vynkor_wire::proto::veyron::{
     envelope, ActionRequest, ActionRequestChunk, ActionResponse, ActionResponseChunk,
     AudioStreamChunk, Envelope, EventAck, EventPublish, EventPublishAck, KernelCommand,
     KernelCommandAck, Ping, PluginManifest, PluginRegister, PluginRegisterAck, SessionClose,
     Subscribe, Unsubscribe,
 };
-use veyron_wire::WireError as VeyronError;
+use vynkor_wire::WireError as VeyronError;
 
 /// Mirror of the kernel's inbound reassembly bounds (see `src/ipc/connection.rs`).
 const MAX_REASSEMBLY_STREAMS: usize = 64;
@@ -193,12 +193,12 @@ impl VeyronClient {
     }
 
     /// Connect using the standard environment:
-    /// `VEYRON_SOCKET_PATH` (falls back to the per-user default path) and
-    /// `VEYRON_JWT_SECRET` (optional; enables frame MACs when set).
+    /// `VYN_SOCKET_PATH` (falls back to the per-user default path) and
+    /// `VYN_JWT_SECRET` (optional; enables frame MACs when set).
     pub async fn connect_from_env() -> Result<Self, VeyronError> {
-        let socket_path = std::env::var("VEYRON_SOCKET_PATH")
-            .unwrap_or_else(|_| veyron_wire::socket::default_socket_path());
-        match std::env::var("VEYRON_JWT_SECRET") {
+        let socket_path = std::env::var("VYN_SOCKET_PATH")
+            .unwrap_or_else(|_| vynkor_wire::socket::default_socket_path());
+        match std::env::var("VYN_JWT_SECRET") {
             Ok(secret) if !secret.is_empty() => {
                 Self::connect_with_secret(&socket_path, secret.as_bytes()).await
             }

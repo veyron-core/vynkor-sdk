@@ -9,9 +9,9 @@
 //! ## Quick start
 //!
 //! ```no_run
-//! use veyron_sdk::{Plugin, VeyronClient};
-//! use veyron_sdk::proto::{envelope, ActionResponse, ActionStatus, Envelope, PluginManifest};
-//! use veyron_sdk::VeyronError;
+//! use vynkor_sdk::{Plugin, VeyronClient};
+//! use vynkor_sdk::proto::{envelope, ActionResponse, ActionStatus, Envelope, PluginManifest};
+//! use vynkor_sdk::VeyronError;
 //!
 //! struct EchoPlugin;
 //!
@@ -50,11 +50,11 @@
 //!
 //! | Variable             | Meaning                                                    |
 //! |----------------------|------------------------------------------------------------|
-//! | `VEYRON_SOCKET_PATH` | Kernel UDS path (default: per-user runtime dir)            |
-//! | `VEYRON_JWT_TOKEN`   | JWT presented at registration (secured kernels)            |
-//! | `VEYRON_JWT_SECRET`  | Shared secret; enables per-frame HMAC-SHA256 tags          |
+//! | `VYN_SOCKET_PATH` | Kernel UDS path (default: per-user runtime dir)            |
+//! | `VYN_JWT_TOKEN`   | JWT presented at registration (secured kernels)            |
+//! | `VYN_JWT_SECRET`  | Shared secret; enables per-frame HMAC-SHA256 tags          |
 //!
-//! The same `VEYRON_JWT_TOKEN` / `VEYRON_JWT_SECRET` drive
+//! The same `VYN_JWT_TOKEN` / `VYN_JWT_SECRET` drive
 //! [`Plugin::run_ws`](crate::Plugin::run_ws), which connects over WebSocket.
 //!
 //! ## Protocol coverage
@@ -77,14 +77,14 @@ pub use confirmation_gate::{
     send_confirmation, send_confirmation_request, ConfirmationGate, PendingAction,
 };
 pub use plugin::Plugin;
-pub use veyron_wire::WireError as VeyronError;
+pub use vynkor_wire::WireError as VeyronError;
 
 /// Frame-MAC primitives (HKDF session-key derivation, HMAC-SHA256 tags),
 /// shared with the kernel.
-pub use veyron_wire::mac as frame_mac;
+pub use vynkor_wire::mac as frame_mac;
 
 /// Generated Protobuf types for the Veyron protocol
 /// (`wire/proto/veyron_protocol.proto`).
 pub mod proto {
-    pub use veyron_wire::proto::veyron::*;
+    pub use vynkor_wire::proto::veyron::*;
 }

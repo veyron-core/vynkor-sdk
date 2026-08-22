@@ -1,18 +1,18 @@
 [package]
-name = "veyron-sdk"
-version = "0.1.6"
+name = "vynkor-sdk"
+version = "0.0.1"
 edition = "2021"
 rust-version = "1.85"
-description = "Rust SDK for writing Veyron plugins — async IPC client (UDS + WebSocket), Plugin trait, and full Veyron wire protocol (framing, zstd compression, HMAC frame MACs, fragmentation, raw audio)."
+description = "Rust SDK for writing Vynkor plugins — async IPC client (UDS + WebSocket), Plugin trait, and full Vynkor wire protocol (framing, zstd compression, HMAC frame MACs, fragmentation, raw audio)."
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/veyron-core/veyron-sdk-rust"
-documentation = "https://docs.rs/veyron-sdk"
-keywords = ["veyron", "plugin", "ipc", "sdk", "kernel"]
+repository = "https://github.com/veyron-core/vynkor-sdk-rust"
+documentation = "https://docs.rs/vynkor-sdk"
+keywords = ["vynkor", "plugin", "ipc", "sdk", "kernel"]
 categories = ["api-bindings", "asynchronous"]
 
 [dependencies]
-veyron-wire = "0.2.3"
+vynkor-wire = "0.0.1"
 tokio = { version = "1", features = ["net", "io-util", "time", "rt", "macros", "sync"] }
 tokio-tungstenite = "0.24"
 futures-util = "0.3"

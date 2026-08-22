@@ -1,9 +1,9 @@
-# veyron-sdk
+# vynkor-sdk
 
-Rust SDK for writing [Veyron](https://github.com/veyron-core/veyron) plugins.
+Rust SDK for writing [Vynkor](https://github.com/veyron-core/veyron) plugins.
 
-A Veyron plugin is a separate OS process supervised by the Veyron kernel. It
-talks to the kernel using the Veyron wire protocol — 44-byte framed messages
+A Vynkor plugin is a separate OS process supervised by the Vynkor kernel. It
+talks to the kernel using the Vynkor wire protocol — 44-byte framed messages
 carrying Protobuf envelopes, with optional zstd compression, HMAC-SHA256 frame
 authentication, and fragmentation — over a Unix domain socket (local plugins)
 or the kernel's WebSocket gateway (remote devices, D-05).
@@ -11,8 +11,8 @@ or the kernel's WebSocket gateway (remote devices, D-05).
 ## Quick start
 
 ```rust
-use veyron_sdk::{Plugin, VeyronClient, VeyronError};
-use veyron_sdk::proto::{envelope, ActionResponse, ActionStatus, Envelope, PluginManifest};
+use vynkor_sdk::{Plugin, VeyronClient, VeyronError};
+use vynkor_sdk::proto::{envelope, ActionResponse, ActionStatus, Envelope, PluginManifest};
 
 struct EchoPlugin;
 
@@ -63,8 +63,8 @@ stored at request time. Enforcement keys on the kernel-stamped
 sender and cannot be spoofed:
 
 ```rust
-use veyron_sdk::confirmation_gate::{ConfirmationGate, send_confirmation_request, send_confirmation};
-use veyron_sdk::proto::ActionRisk;
+use vynkor_sdk::confirmation_gate::{ConfirmationGate, send_confirmation_request, send_confirmation};
+use vynkor_sdk::proto::ActionRisk;
 
 let gate = ConfirmationGate::new(
     "transfer",
@@ -114,13 +114,13 @@ passes unchanged.
 
 | Variable             | Meaning                                                        |
 |----------------------|----------------------------------------------------------------|
-| `VEYRON_SOCKET_PATH` | Kernel UDS path. Default: `XDG_RUNTIME_DIR` → `/run/user/<uid>` → `~/.veyron/run` (never shared `/tmp`). |
-| `VEYRON_JWT_TOKEN`   | JWT presented at registration (required on secured kernels).   |
-| `VEYRON_JWT_SECRET`  | Shared secret; enables per-frame HMAC-SHA256 tags after registration. |
+| `VYN_SOCKET_PATH` | Kernel UDS path. Default: `XDG_RUNTIME_DIR` → `/run/user/<uid>` → `~/.local/state/vyn/run` (never shared `/tmp`). |
+| `VYN_JWT_TOKEN`   | JWT presented at registration (required on secured kernels).   |
+| `VYN_JWT_SECRET`  | Shared secret; enables per-frame HMAC-SHA256 tags after registration. |
 
 ## Protocol coverage
 
-The SDK re-exports the kernel framing layer (`veyron_sdk::framing`), so the
+The SDK re-exports the kernel framing layer (`vynkor_sdk::framing`), so the
 wire format cannot drift between the two sides. All flag bits from
 `docs/FRAMING.md` are handled:
 
@@ -133,20 +133,19 @@ wire format cannot drift between the two sides. All flag bits from
 
 ## Versioning & unpublished crates
 
-The SDK tracks the `veyron-wire` protocol: crate `0.1.x` corresponds to wire
-`0.2.x` (protocol v1.6 as of SDK `0.1.5`). Before a crates.io release the
-`veyron-wire` dependency may point at a version that isn't published yet —
-resolve it from git with a `[patch.crates-io]` override in your own
-`Cargo.toml` (or in `.cargo/config.toml`, gitignored):
+The SDK tracks the `vynkor-wire` protocol (protocol v1.6). Before a crates.io
+release the `vynkor-wire` dependency may point at a version that isn't
+published yet — resolve it from git with a `[patch.crates-io]` override in
+your own `Cargo.toml` (or in `.cargo/config.toml`, gitignored):
 
 ```toml
 [patch.crates-io]
-veyron-wire = { git = "https://github.com/veyron-core/veyron-wire" }
+vynkor-wire = { git = "https://github.com/veyron-core/vynkor-wire" }
 ```
 
 To release the SDK itself (`cargo publish`), crates.io requires registry
-dependencies — switch the `veyron-wire` requirement back to a plain version
-spec first, then publish `veyron-wire` before `veyron-sdk`.
+dependencies — switch the `vynkor-wire` requirement back to a plain version
+spec first, then publish `vynkor-wire` before `vynkor-sdk`.
 
 ## Client API
 

@@ -24,8 +24,8 @@
 //! [`ConfirmationGate::route`]:
 //!
 //! ```
-//! use veyron_sdk::confirmation_gate::ConfirmationGate;
-//! use veyron_sdk::proto::ActionRisk;
+//! use vynkor_sdk::confirmation_gate::ConfirmationGate;
+//! use vynkor_sdk::proto::ActionRisk;
 //!
 //! let gate = ConfirmationGate::new(
 //!     "transfer",

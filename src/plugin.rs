@@ -6,8 +6,8 @@
 
 use crate::client::VeyronClient;
 use std::env;
-use veyron_wire::proto::veyron::{envelope, Envelope, Event, PluginManifest, Pong};
-use veyron_wire::WireError as VeyronError;
+use vynkor_wire::proto::veyron::{envelope, Envelope, Event, PluginManifest, Pong};
+use vynkor_wire::WireError as VeyronError;
 
 fn unix_millis() -> u64 {
     std::time::SystemTime::now()
@@ -22,10 +22,10 @@ fn unix_millis() -> u64 {
 ///
 /// Lifecycle driven by [`Plugin::run`]:
 ///
-/// 1. Connect to the kernel socket (`VEYRON_SOCKET_PATH` or the per-user
+/// 1. Connect to the kernel socket (`VYN_SOCKET_PATH` or the per-user
 ///    default; never the shared world-writable `/tmp`).
-/// 2. Register, presenting `VEYRON_JWT_TOKEN` if set. When
-///    `VEYRON_JWT_SECRET` is also set, all subsequent frames carry an
+/// 2. Register, presenting `VYN_JWT_TOKEN` if set. When
+///    `VYN_JWT_SECRET` is also set, all subsequent frames carry an
 ///    HMAC-SHA256 tag (see `docs/FRAMING.md`).
 /// 3. Call [`Plugin::on_init`].
 /// 4. Receive loop: Ping is answered automatically; `PluginShutdown` exits
@@ -73,20 +73,20 @@ pub trait Plugin {
     }
 
     /// Connect, register and serve until shutdown. Socket path comes from
-    /// `VEYRON_SOCKET_PATH`, falling back to the same per-user resolution as
-    /// the kernel (XDG_RUNTIME_DIR → /run/user/{uid} → ~/.veyron/run). Never
+    /// `VYN_SOCKET_PATH`, falling back to the same per-user resolution as
+    /// the kernel (XDG_RUNTIME_DIR → /run/user/{uid} → ~/.local/state/vyn/run). Never
     /// the world-writable shared /tmp (BUG-006).
     async fn run(&mut self) -> Result<(), VeyronError> {
-        let socket_path = env::var("VEYRON_SOCKET_PATH")
-            .unwrap_or_else(|_| veyron_wire::socket::default_socket_path());
+        let socket_path = env::var("VYN_SOCKET_PATH")
+            .unwrap_or_else(|_| vynkor_wire::socket::default_socket_path());
         self.run_with(&socket_path).await
     }
 
     /// [`Plugin::run`] against an explicit socket path. JWT credentials are
-    /// still read from `VEYRON_JWT_TOKEN` / `VEYRON_JWT_SECRET` when present.
+    /// still read from `VYN_JWT_TOKEN` / `VYN_JWT_SECRET` when present.
     async fn run_with(&mut self, socket_path: &str) -> Result<(), VeyronError> {
-        let token = env::var("VEYRON_JWT_TOKEN").unwrap_or_default();
-        let secret = env::var("VEYRON_JWT_SECRET").ok().filter(|s| !s.is_empty());
+        let token = env::var("VYN_JWT_TOKEN").unwrap_or_default();
+        let secret = env::var("VYN_JWT_SECRET").ok().filter(|s| !s.is_empty());
         let client = match secret {
             Some(s) => VeyronClient::connect_with_secret(socket_path, s.as_bytes()).await?,
             None => VeyronClient::connect(socket_path).await?,
@@ -97,12 +97,12 @@ pub trait Plugin {
     /// Connect to a kernel WebSocket gateway (D-05), register and serve until
     /// shutdown — the WS mirror of [`Plugin::run_with`] for remote devices.
     /// JWT credentials come from the same env vars as the UDS path
-    /// (`VEYRON_JWT_TOKEN` / `VEYRON_JWT_SECRET`); the token is presented both
+    /// (`VYN_JWT_TOKEN` / `VYN_JWT_SECRET`); the token is presented both
     /// in the `Sec-WebSocket-Protocol` handshake header and in the
     /// registration envelope.
     async fn run_ws(&mut self, url: &str) -> Result<(), VeyronError> {
-        let token = env::var("VEYRON_JWT_TOKEN").unwrap_or_default();
-        let secret = env::var("VEYRON_JWT_SECRET").ok().filter(|s| !s.is_empty());
+        let token = env::var("VYN_JWT_TOKEN").unwrap_or_default();
+        let secret = env::var("VYN_JWT_SECRET").ok().filter(|s| !s.is_empty());
         let client = match &secret {
             Some(s) => VeyronClient::connect_ws(url, &token, Some(s.as_bytes())).await?,
             None => VeyronClient::connect_ws(url, &token, None).await?,
