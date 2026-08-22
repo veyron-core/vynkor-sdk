@@ -9,16 +9,16 @@
 use prost::Message;
 use std::time::Duration;
 use tokio::net::UnixStream;
-use veyron_sdk::frame_mac::{compute_tag, derive_session_key, verify_tag};
-use veyron_sdk::framing::{
+use vynkor_sdk::frame_mac::{compute_tag, derive_session_key, verify_tag};
+use vynkor_sdk::framing::{
     parse_frag_header, read_frame, serialize_header, write_frame_raw, Frame, COMPRESS_THRESHOLD,
     FLAG_FRAGMENTED, FLAG_MAC_PRESENT, FLAG_RAW_BINARY, FRAG_HEADER_SIZE, MAX_PAYLOAD_SIZE,
 };
-use veyron_sdk::proto::{
+use vynkor_sdk::proto::{
     envelope, ActionRequest, ActionStatus, ActionStreamAbort, Envelope, Event, Ping,
     PluginManifest, PluginRegisterAck, PluginShutdown, SessionClose,
 };
-use veyron_sdk::{Plugin, VeyronClient, VeyronError};
+use vynkor_sdk::{Plugin, VeyronClient, VeyronError};
 
 fn envelope_with_event(event_id: &str) -> Envelope {
     Envelope {
@@ -73,7 +73,7 @@ async fn large_payload_is_compressed_on_wire_and_normalized_on_read() {
     assert_eq!(&*frame.payload, expected);
     assert_eq!(frame.length as usize, expected.len());
     assert_eq!(frame.crc32, crc32fast::hash(&expected));
-    assert_eq!(frame.flags & veyron_sdk::framing::FLAG_COMPRESSED, 0);
+    assert_eq!(frame.flags & vynkor_sdk::framing::FLAG_COMPRESSED, 0);
 }
 
 #[tokio::test]
@@ -509,7 +509,7 @@ async fn plugin_serve_propagates_on_message_handler_error() {
         // Any envelope not handled specially (Ping/Event/PluginShutdown) routes
         // to on_message. A bare Pong lands there.
         let msg = Envelope {
-            payload: Some(envelope::Payload::Pong(veyron_sdk::proto::Pong {
+            payload: Some(envelope::Payload::Pong(vynkor_sdk::proto::Pong {
                 original_timestamp: 0,
                 server_timestamp: 0,
             })),
@@ -751,8 +751,8 @@ async fn recv_distinguishes_session_close_from_stream_abort() {
 // ── Concurrent serve loop (hot-path plugins) ─────────────────────────
 
 use std::sync::Arc;
-use veyron_sdk::concurrent::{response_envelope, run_concurrent_loop};
-use veyron_sdk::ConcurrentHandler;
+use vynkor_sdk::concurrent::{response_envelope, run_concurrent_loop};
+use vynkor_sdk::ConcurrentHandler;
 
 /// Handler that echoes params back, optionally panicking on a marker
 /// action and optionally rejecting a marker caller via the accept gate.
@@ -774,14 +774,14 @@ impl ConcurrentHandler for TestConcurrentHandler {
         }
     }
 
-    fn accept(&self, req: &veyron_sdk::proto::ActionRequest) -> Result<(), String> {
+    fn accept(&self, req: &vynkor_sdk::proto::ActionRequest) -> Result<(), String> {
         if req.caller_plugin_id == "rejected-caller" {
             return Err("caller rejected by gate".into());
         }
         Ok(())
     }
 
-    async fn on_action(&self, req: veyron_sdk::proto::ActionRequest) -> Vec<Envelope> {
+    async fn on_action(&self, req: vynkor_sdk::proto::ActionRequest) -> Vec<Envelope> {
         if req.action == "panic" {
             panic!("boom");
         }

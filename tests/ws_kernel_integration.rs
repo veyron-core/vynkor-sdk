@@ -2,7 +2,7 @@
 //! gateway (D-05 acceptance: "an SDK plugin connects to the WS endpoint,
 //! registers, and round-trips actions").
 //!
-//! Requires a built `vyn` binary. Located via `VEYRON_BIN`, falling back to
+//! Requires a built `vyn` binary. Located via `VYN_BIN`, falling back to
 //! the sibling checkout `../veyron/target/{debug,release}/vyn`. When no
 //! binary exists the tests skip with a note — build the kernel first
 //! (`cargo build --manifest-path ../veyron/Cargo.toml`).
@@ -14,17 +14,17 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
 use tokio::process::Command;
 use tokio::time::timeout;
-use veyron_sdk::frame_mac::compute_tag;
-use veyron_sdk::proto::{
+use vynkor_sdk::frame_mac::compute_tag;
+use vynkor_sdk::proto::{
     envelope, ActionRequest, ActionResponse, ActionStatus, Envelope, PluginManifest,
 };
-use veyron_sdk::{VeyronClient, VeyronError};
+use vynkor_sdk::{VeyronClient, VeyronError};
 
 const WS_GATEWAY: &str = "/ws";
 const SECRET_32: &[u8; 32] = b"0123456789abcdef0123456789abcdef";
 
 fn kernel_bin() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("VEYRON_BIN") {
+    if let Ok(p) = std::env::var("VYN_BIN") {
         return Some(PathBuf::from(p));
     }
     ["../veyron/target/debug/vyn", "../veyron/target/release/vyn"]
@@ -55,7 +55,7 @@ async fn spawn_kernel(bin: PathBuf, jwt_secret: Option<&str>) -> KernelProc {
         "port: {port}\n\
          log_level: info\n\
          data_dir: {dir}\n\
-         socket_path: {dir}/veyron.sock\n\
+         socket_path: {dir}/vyn.sock\n\
          pid_file: {dir}/vyn.pid\n\
          log_file: {dir}/vyn.log\n\
          tls: false\n\
@@ -148,7 +148,7 @@ fn b64url(data: &[u8]) -> String {
 #[tokio::test]
 async fn ws_sdk_plugin_registers_and_roundtrips_action() {
     let Some(bin) = kernel_bin() else {
-        eprintln!("skipping: vyn binary not found — set VEYRON_BIN or build ../veyron first");
+        eprintln!("skipping: vyn binary not found — set VYN_BIN or build ../veyron first");
         return;
     };
     let kernel = spawn_kernel(bin, None).await;
@@ -261,7 +261,7 @@ async fn ws_sdk_plugin_registers_and_roundtrips_action() {
 #[tokio::test]
 async fn ws_sdk_secured_jwt_and_mac_roundtrip() {
     let Some(bin) = kernel_bin() else {
-        eprintln!("skipping: vyn binary not found — set VEYRON_BIN or build ../veyron first");
+        eprintln!("skipping: vyn binary not found — set VYN_BIN or build ../veyron first");
         return;
     };
     let kernel = spawn_kernel(bin, Some(std::str::from_utf8(SECRET_32).unwrap())).await;

@@ -4,10 +4,10 @@
 //! handling in `on_message`, and event delivery via `on_event`.
 //!
 //! Run (with a kernel listening on the default socket):
-//!     VEYRON_JWT_TOKEN=<token> cargo run -p veyron-sdk --example echo_plugin
+//!     VYN_JWT_TOKEN=<token> cargo run -p veyron-sdk --example echo_plugin
 
-use veyron_sdk::proto::{envelope, ActionResponse, ActionStatus, Envelope, Event, PluginManifest};
-use veyron_sdk::{Plugin, VeyronClient, VeyronError};
+use vynkor_sdk::proto::{envelope, ActionResponse, ActionStatus, Envelope, Event, PluginManifest};
+use vynkor_sdk::{Plugin, VeyronClient, VeyronError};
 
 struct EchoPlugin;
 
