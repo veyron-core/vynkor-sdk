@@ -52,7 +52,7 @@
 //! The requesting side (e.g. the AI) calls
 //! [`send_confirmation_request`] to obtain a `pending_id`, then the user's
 //! device calls [`send_confirmation`] with it. Both are thin wrappers over
-//! [`VeyronClient::send_action`] on `request_<op>` / `confirm_<op>`.
+//! [`VynkorClient::send_action`] on `request_<op>` / `confirm_<op>`.
 //!
 //! # Pending store
 //!
@@ -65,12 +65,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use crate::client::VeyronClient;
+use crate::client::VynkorClient;
 use crate::concurrent::response_envelope;
 use crate::proto::{
     envelope, ActionRequest, ActionResponse, ActionRisk, ActionSpec, ActionStatus, Envelope,
 };
-use crate::VeyronError;
+use crate::VynkorError;
 
 /// Default lifetime of an unconfirmed pending request.
 const DEFAULT_PENDING_TTL: Duration = Duration::from_secs(300);
@@ -360,26 +360,26 @@ impl ConfirmationGate {
 /// the plugin assigned. Errors when the plugin replies anything but
 /// `ActionOk`, or when the reply has no `pending_id`.
 pub async fn send_confirmation_request(
-    client: &mut VeyronClient,
+    client: &mut VynkorClient,
     op: &str,
     params_json: &[u8],
-) -> Result<String, VeyronError> {
+) -> Result<String, VynkorError> {
     let resp = client
         .send_action(&format!("request_{op}"), params_json, 0)
         .await?;
     if resp.status != ActionStatus::ActionOk as i32 {
-        return Err(VeyronError::Internal(format!(
+        return Err(VynkorError::Internal(format!(
             "request_{op} failed: {}",
             resp.error
         )));
     }
     let value: serde_json::Value = serde_json::from_slice(&resp.data_json)
-        .map_err(|e| VeyronError::Internal(format!("invalid pending response: {e}")))?;
+        .map_err(|e| VynkorError::Internal(format!("invalid pending response: {e}")))?;
     value
         .get("pending_id")
         .and_then(|p| p.as_str())
         .map(str::to_string)
-        .ok_or_else(|| VeyronError::Internal("pending response missing pending_id".into()))
+        .ok_or_else(|| VynkorError::Internal("pending response missing pending_id".into()))
 }
 
 /// Caller-side one-liner for the confirming side (e.g. the user's device):
@@ -389,12 +389,12 @@ pub async fn send_confirmation_request(
 /// allowlist gets an `ActionError` response with a permission-denied
 /// message (inspect `.status` / `.error`).
 pub async fn send_confirmation(
-    client: &mut VeyronClient,
+    client: &mut VynkorClient,
     op: &str,
     pending_id: &str,
-) -> Result<ActionResponse, VeyronError> {
+) -> Result<ActionResponse, VynkorError> {
     let params = serde_json::to_vec(&serde_json::json!({ "pending_id": pending_id }))
-        .map_err(|e| VeyronError::Internal(format!("failed to encode confirm params: {e}")))?;
+        .map_err(|e| VynkorError::Internal(format!("failed to encode confirm params: {e}")))?;
     client
         .send_action(&format!("confirm_{op}"), &params, 0)
         .await

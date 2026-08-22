@@ -1,5 +1,5 @@
 //! Re-exports of the kernel framing layer — the single source of truth for
-//! the Veyron wire format (`docs/FRAMING.md`). The SDK never redefines flag
+//! the Vynkor wire format (`docs/FRAMING.md`). The SDK never redefines flag
 //! constants or frame parsing; it shares the kernel implementation so the two
 //! sides cannot drift.
 

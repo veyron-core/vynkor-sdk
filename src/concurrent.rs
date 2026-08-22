@@ -9,7 +9,7 @@
 //! This module provides the ROADMAP's "hot-path plugins" pattern as a
 //! first-class SDK facility instead of a per-plugin copy-paste:
 //!
-//! - one task owns the [`VeyronClient`] exclusively and
+//! - one task owns the [`VynkorClient`] exclusively and
 //!   [`tokio::select!`]s between inbound frames and an mpsc channel of
 //!   completed response envelopes;
 //! - each inbound [`ActionRequest`] is dispatched to a [`tokio::spawn`]ed
@@ -27,18 +27,18 @@
 //! drive it from `main` via [`serve_concurrent`], or use
 //! [`run_concurrent_loop`] directly in tests against a pre-registered
 //! client. See `plugins/database` and `plugins/network` in the
-//! `veyron-plugins` repository for migrated examples.
+//! `vynkor-plugins` repository for migrated examples.
 
 use std::future::Future;
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
-use crate::client::VeyronClient;
+use crate::client::VynkorClient;
 use crate::proto::{
     envelope, ActionRequest, ActionResponse, ActionStatus, Envelope, Event, PluginManifest, Pong,
 };
-use crate::VeyronError;
+use crate::VynkorError;
 
 /// Size of the mpsc channel funneling completed response envelopes from
 /// spawned handler tasks back to the single task that owns the client.
@@ -98,8 +98,8 @@ pub trait ConcurrentHandler: Send + Sync + 'static {
     /// Use the client to subscribe, negotiate streams, etc.
     fn on_init(
         &self,
-        _client: &mut VeyronClient,
-    ) -> impl Future<Output = Result<(), VeyronError>> + Send {
+        _client: &mut VynkorClient,
+    ) -> impl Future<Output = Result<(), VynkorError>> + Send {
         async { Ok(()) }
     }
 
@@ -135,7 +135,7 @@ pub trait ConcurrentHandler: Send + Sync + 'static {
     fn on_event(
         &self,
         _event: Event,
-    ) -> impl Future<Output = Result<Option<Envelope>, VeyronError>> + Send {
+    ) -> impl Future<Output = Result<Option<Envelope>, VynkorError>> + Send {
         async { Ok(None) }
     }
 
@@ -145,13 +145,13 @@ pub trait ConcurrentHandler: Send + Sync + 'static {
     fn on_message(
         &self,
         _env: Envelope,
-    ) -> impl Future<Output = Result<Option<Envelope>, VeyronError>> + Send {
+    ) -> impl Future<Output = Result<Option<Envelope>, VynkorError>> + Send {
         async { Ok(None) }
     }
 
     /// Called once when the loop ends (kernel shutdown request, disconnect,
     /// or handler error).
-    fn on_shutdown(&self) -> impl Future<Output = Result<(), VeyronError>> + Send {
+    fn on_shutdown(&self) -> impl Future<Output = Result<(), VynkorError>> + Send {
         async { Ok(()) }
     }
 }
@@ -161,12 +161,12 @@ pub trait ConcurrentHandler: Send + Sync + 'static {
 ///
 /// Wraps [`run_concurrent_loop`] with registration; `jwt_token` is
 /// presented at registration (empty string on unsecured kernels). A
-/// rejected registration is an [`VeyronError::PermissionDenied`].
+/// rejected registration is an [`VynkorError::PermissionDenied`].
 pub async fn serve_concurrent<H: ConcurrentHandler>(
-    mut client: VeyronClient,
+    mut client: VynkorClient,
     jwt_token: &str,
     handler: Arc<H>,
-) -> Result<(), VeyronError> {
+) -> Result<(), VynkorError> {
     let ack = client
         .register_full(
             handler.id(),
@@ -176,7 +176,7 @@ pub async fn serve_concurrent<H: ConcurrentHandler>(
         )
         .await?;
     if !ack.accepted {
-        return Err(VeyronError::PermissionDenied(format!(
+        return Err(VynkorError::PermissionDenied(format!(
             "registration rejected: {}",
             ack.reject_reason
         )));
@@ -210,15 +210,15 @@ pub async fn serve_concurrent<H: ConcurrentHandler>(
 /// `tx.send(...)`, which needs the channel's internal queue lock — a
 /// short-lived, always-available lock unrelated to the client. No task
 /// ever waits on a resource held by a task that is itself waiting on it,
-/// which is exactly the deadlock the old `Arc<Mutex<VeyronClient>>`
+/// which is exactly the deadlock the old `Arc<Mutex<VynkorClient>>`
 /// design produced.
 ///
 /// Use this directly in tests against a pre-registered client (e.g. built
-/// with [`VeyronClient::from_stream`] over `UnixStream::pair`).
+/// with [`VynkorClient::from_stream`] over `UnixStream::pair`).
 pub async fn run_concurrent_loop<H: ConcurrentHandler>(
-    mut client: VeyronClient,
+    mut client: VynkorClient,
     handler: Arc<H>,
-) -> Result<(), VeyronError> {
+) -> Result<(), VynkorError> {
     let (tx, mut rx) = mpsc::channel::<Envelope>(RESPONSE_CHANNEL_CAPACITY);
 
     loop {

@@ -1,12 +1,12 @@
 [package]
 name = "vynkor-sdk"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 rust-version = "1.85"
 description = "Rust SDK for writing Vynkor plugins — async IPC client (UDS + WebSocket), Plugin trait, and full Vynkor wire protocol (framing, zstd compression, HMAC frame MACs, fragmentation, raw audio)."
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/veyron-core/vynkor-sdk-rust"
+repository = "https://github.com/veyron-core/vynkor-sdk"
 documentation = "https://docs.rs/vynkor-sdk"
 keywords = ["vynkor", "plugin", "ipc", "sdk", "kernel"]
 categories = ["api-bindings", "asynchronous"]

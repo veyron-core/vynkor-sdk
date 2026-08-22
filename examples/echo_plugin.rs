@@ -1,13 +1,13 @@
-//! Lightweight demo plugin for the Veyron Rust SDK.
+//! Lightweight demo plugin for the Vynkor Rust SDK.
 //!
 //! Shows: manifest declaration, event subscription in `on_init`, action
 //! handling in `on_message`, and event delivery via `on_event`.
 //!
 //! Run (with a kernel listening on the default socket):
-//!     VYN_JWT_TOKEN=<token> cargo run -p veyron-sdk --example echo_plugin
+//!     VYN_JWT_TOKEN=<token> cargo run -p vynkor-sdk --example echo_plugin
 
 use vynkor_sdk::proto::{envelope, ActionResponse, ActionStatus, Envelope, Event, PluginManifest};
-use vynkor_sdk::{Plugin, VeyronClient, VeyronError};
+use vynkor_sdk::{Plugin, VynkorClient, VynkorError};
 
 struct EchoPlugin;
 
@@ -24,12 +24,12 @@ impl Plugin for EchoPlugin {
         }
     }
 
-    async fn on_init(&mut self, client: &mut VeyronClient) -> Result<(), VeyronError> {
+    async fn on_init(&mut self, client: &mut VynkorClient) -> Result<(), VynkorError> {
         println!("[{}] registered, subscribing to events", self.id());
         client.subscribe(self.manifest().events).await
     }
 
-    async fn on_message(&mut self, envelope: Envelope) -> Result<Option<Envelope>, VeyronError> {
+    async fn on_message(&mut self, envelope: Envelope) -> Result<Option<Envelope>, VynkorError> {
         match envelope.payload {
             Some(envelope::Payload::ActionRequest(req)) if req.action == "echo" => {
                 Ok(Some(Envelope {
@@ -58,7 +58,7 @@ impl Plugin for EchoPlugin {
         }
     }
 
-    async fn on_event(&mut self, event: Event) -> Result<Option<Envelope>, VeyronError> {
+    async fn on_event(&mut self, event: Event) -> Result<Option<Envelope>, VynkorError> {
         println!(
             "[{}] event {}: {:?}",
             self.id(),
@@ -68,13 +68,13 @@ impl Plugin for EchoPlugin {
         Ok(None)
     }
 
-    async fn on_shutdown(&mut self) -> Result<(), VeyronError> {
+    async fn on_shutdown(&mut self) -> Result<(), VynkorError> {
         println!("[{}] shutting down", self.id());
         Ok(())
     }
 }
 
 #[tokio::main]
-async fn main() -> Result<(), VeyronError> {
+async fn main() -> Result<(), VynkorError> {
     EchoPlugin.run().await
 }

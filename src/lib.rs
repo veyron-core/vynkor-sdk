@@ -1,17 +1,17 @@
-//! # Veyron Rust SDK
+//! # Vynkor Rust SDK
 //!
-//! Write Veyron plugins in Rust. A plugin is a separate OS process that talks
-//! to the Veyron kernel using the Veyron wire protocol (length-prefixed frames
-//! carrying Protobuf envelopes; see `docs/FRAMING.md` in the Veyron
+//! Write Vynkor plugins in Rust. A plugin is a separate OS process that talks
+//! to the Vynkor kernel using the Vynkor wire protocol (length-prefixed frames
+//! carrying Protobuf envelopes; see `docs/FRAMING.md` in the Vynkor
 //! repository) over a Unix domain socket or — for remote devices — the
 //! kernel's WebSocket gateway.
 //!
 //! ## Quick start
 //!
 //! ```no_run
-//! use vynkor_sdk::{Plugin, VeyronClient};
+//! use vynkor_sdk::{Plugin, VynkorClient};
 //! use vynkor_sdk::proto::{envelope, ActionResponse, ActionStatus, Envelope, PluginManifest};
-//! use vynkor_sdk::VeyronError;
+//! use vynkor_sdk::VynkorError;
 //!
 //! struct EchoPlugin;
 //!
@@ -24,7 +24,7 @@
 //!         PluginManifest::default()
 //!     }
 //!
-//!     async fn on_message(&mut self, envelope: Envelope) -> Result<Option<Envelope>, VeyronError> {
+//!     async fn on_message(&mut self, envelope: Envelope) -> Result<Option<Envelope>, VynkorError> {
 //!         match envelope.payload {
 //!             Some(envelope::Payload::ActionRequest(req)) => Ok(Some(Envelope {
 //!                 payload: Some(envelope::Payload::ActionResponse(ActionResponse {
@@ -41,7 +41,7 @@
 //! }
 //!
 //! #[tokio::main]
-//! async fn main() -> Result<(), VeyronError> {
+//! async fn main() -> Result<(), VynkorError> {
 //!     EchoPlugin.run().await
 //! }
 //! ```
@@ -61,7 +61,7 @@
 //!
 //! Compression (`FLAG_COMPRESSED`), frame MACs (`FLAG_MAC_PRESENT`),
 //! fragmentation (`FLAG_FRAGMENTED`) and raw audio (`FLAG_RAW_BINARY`) are all
-//! handled — see [`VeyronClient`] for the transport API and [`framing`] for
+//! handled — see [`VynkorClient`] for the transport API and [`framing`] for
 //! the shared wire-format primitives. Over WebSocket, compression and
 //! fragmentation are outbound-disabled to match the gateway's limits (R5-03).
 
@@ -71,19 +71,19 @@ pub mod confirmation_gate;
 pub mod framing;
 pub mod plugin;
 
-pub use client::VeyronClient;
+pub use client::VynkorClient;
 pub use concurrent::{response_envelope, run_concurrent_loop, serve_concurrent, ConcurrentHandler};
 pub use confirmation_gate::{
     send_confirmation, send_confirmation_request, ConfirmationGate, PendingAction,
 };
 pub use plugin::Plugin;
-pub use vynkor_wire::WireError as VeyronError;
+pub use vynkor_wire::WireError as VynkorError;
 
 /// Frame-MAC primitives (HKDF session-key derivation, HMAC-SHA256 tags),
 /// shared with the kernel.
 pub use vynkor_wire::mac as frame_mac;
 
-/// Generated Protobuf types for the Veyron protocol
+/// Generated Protobuf types for the Vynkor protocol
 /// (`wire/proto/veyron_protocol.proto`).
 pub mod proto {
     pub use vynkor_wire::proto::veyron::*;

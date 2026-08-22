@@ -18,7 +18,7 @@ use vynkor_sdk::framing::{
 use vynkor_sdk::proto::{
     envelope, ActionResponse, ActionStatus, Envelope, Ping, PluginManifest, PluginRegisterAck, Pong,
 };
-use vynkor_sdk::{VeyronClient, VeyronError};
+use vynkor_sdk::{VynkorClient, VynkorError};
 
 const FAKE_SECRET: &[u8] = b"ws-fake-secret-32-bytes-minimum";
 const NONCE: &[u8; 16] = b"0123456789abcdef";
@@ -36,7 +36,7 @@ async fn spawn_listener() -> (u16, TcpListener) {
     (port, listener)
 }
 
-/// Upgrade a TCP stream to WS, selecting the `veyron` subprotocol like the
+/// Upgrade a TCP stream to WS, selecting the `vynkor` subprotocol like the
 /// real gateway (axum `ws.protocols(["veyron"])`) so the client's offer is
 /// accepted.
 #[allow(clippy::result_large_err)] // tungstenite::Error embeds a Response
@@ -184,7 +184,7 @@ async fn ws_client_registers_and_roundtrips_action() {
         send_ws_frame(&mut ws, &make_frame("ws-test", &resp, None)).await;
     });
 
-    let mut client = VeyronClient::connect_ws(&ws_url(port), "", None)
+    let mut client = VynkorClient::connect_ws(&ws_url(port), "", None)
         .await
         .expect("ws connect failed");
     let ack = client
@@ -243,7 +243,7 @@ async fn ws_secured_registration_enables_mac() {
         );
     });
 
-    let mut client = VeyronClient::connect_ws(&ws_url(port), "tok", Some(FAKE_SECRET))
+    let mut client = VynkorClient::connect_ws(&ws_url(port), "tok", Some(FAKE_SECRET))
         .await
         .expect("ws connect failed");
     let ack = client
@@ -277,7 +277,7 @@ async fn ws_large_payload_is_not_compressed_on_wire() {
         assert_eq!(&*frame.payload, expected);
     });
 
-    let mut client = VeyronClient::connect_ws(&ws_url(port), "", None)
+    let mut client = VynkorClient::connect_ws(&ws_url(port), "", None)
         .await
         .expect("ws connect failed");
     client
@@ -299,7 +299,7 @@ async fn ws_send_fragmented_is_rejected() {
         while ws.next().await.is_some() {}
     });
 
-    let mut client = VeyronClient::connect_ws(&ws_url(port), "", None)
+    let mut client = VynkorClient::connect_ws(&ws_url(port), "", None)
         .await
         .expect("ws connect failed");
 
@@ -309,7 +309,7 @@ async fn ws_send_fragmented_is_rejected() {
         .await
         .expect_err("fragmented send must fail over WS");
     match err {
-        VeyronError::Internal(msg) => assert!(msg.contains("WebSocket"), "got: {msg}"),
+        VynkorError::Internal(msg) => assert!(msg.contains("WebSocket"), "got: {msg}"),
         other => panic!("expected Internal error, got {other:?}"),
     }
     held.abort();
@@ -333,7 +333,7 @@ async fn ws_raw_binary_passes() {
         assert_eq!(&*frame.payload, expected);
     });
 
-    let mut client = VeyronClient::connect_ws(&ws_url(port), "", None)
+    let mut client = VynkorClient::connect_ws(&ws_url(port), "", None)
         .await
         .expect("ws connect failed");
     client
@@ -423,7 +423,7 @@ async fn ws_reconnect_reregisters_and_reenables_mac() {
     });
 
     // Connection 1.
-    let mut client = VeyronClient::connect_ws(&ws_url(port), "tok", Some(FAKE_SECRET))
+    let mut client = VynkorClient::connect_ws(&ws_url(port), "tok", Some(FAKE_SECRET))
         .await
         .expect("ws connect failed");
     let ack = client
@@ -446,10 +446,10 @@ async fn ws_reconnect_reregisters_and_reenables_mac() {
         .recv_timeout(Duration::from_secs(2))
         .await
         .expect_err("disconnect not surfaced");
-    assert!(matches!(err, VeyronError::Io(_)), "got {err:?}");
+    assert!(matches!(err, VynkorError::Io(_)), "got {err:?}");
 
     // Reconnect: fresh connect + register, MAC re-derived from the new nonce.
-    let mut client = VeyronClient::connect_ws(&ws_url(port), "tok", Some(FAKE_SECRET))
+    let mut client = VynkorClient::connect_ws(&ws_url(port), "tok", Some(FAKE_SECRET))
         .await
         .expect("reconnect failed");
     let ack = client

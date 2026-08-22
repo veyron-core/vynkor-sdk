@@ -1,6 +1,9 @@
 # vynkor-sdk
 
-Rust SDK for writing [Vynkor](https://github.com/veyron-core/veyron) plugins.
+[![crates.io](https://img.shields.io/crates/v/vynkor-sdk.svg)](https://crates.io/crates/vynkor-sdk)
+[![docs.rs](https://docs.rs/vynkor-sdk/badge.svg)](https://docs.rs/vynkor-sdk)
+
+Rust SDK for writing Vynkor plugins.
 
 A Vynkor plugin is a separate OS process supervised by the Vynkor kernel. It
 talks to the kernel using the Vynkor wire protocol — 44-byte framed messages
@@ -8,10 +11,16 @@ carrying Protobuf envelopes, with optional zstd compression, HMAC-SHA256 frame
 authentication, and fragmentation — over a Unix domain socket (local plugins)
 or the kernel's WebSocket gateway (remote devices, D-05).
 
+## Install
+
+```bash
+cargo add vynkor-sdk
+```
+
 ## Quick start
 
 ```rust
-use vynkor_sdk::{Plugin, VeyronClient, VeyronError};
+use vynkor_sdk::{Plugin, VynkorClient, VynkorError};
 use vynkor_sdk::proto::{envelope, ActionResponse, ActionStatus, Envelope, PluginManifest};
 
 struct EchoPlugin;
@@ -25,7 +34,7 @@ impl Plugin for EchoPlugin {
         PluginManifest::default()
     }
 
-    async fn on_message(&mut self, envelope: Envelope) -> Result<Option<Envelope>, VeyronError> {
+    async fn on_message(&mut self, envelope: Envelope) -> Result<Option<Envelope>, VynkorError> {
         match envelope.payload {
             Some(envelope::Payload::ActionRequest(req)) => Ok(Some(Envelope {
                 payload: Some(envelope::Payload::ActionResponse(ActionResponse {
@@ -42,7 +51,7 @@ impl Plugin for EchoPlugin {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), VeyronError> {
+async fn main() -> Result<(), VynkorError> {
     EchoPlugin.run().await
 }
 ```
@@ -97,7 +106,7 @@ URL is the gateway endpoint, e.g. `ws://host:8080/ws`:
 
 ```rust
 #[tokio::main]
-async fn main() -> Result<(), VeyronError> {
+async fn main() -> Result<(), VynkorError> {
     EchoPlugin.run_ws("ws://192.168.1.10:8080/ws").await
 }
 ```
@@ -128,8 +137,8 @@ wire format cannot drift between the two sides. All flag bits from
 |--------------------|--------------------------------------------------|--------------------------------------------|
 | `FLAG_MAC_PRESENT` | automatic after secured registration             | verified; untagged frames rejected         |
 | `FLAG_COMPRESSED`  | automatic for payloads ≥ 64 KiB (UDS only — the WS gateway rejects compressed inbound frames, so the WS transport never compresses) | decompressed + normalized by `read_frame`  |
-| `FLAG_FRAGMENTED`  | `VeyronClient::send_fragmented` (UDS only — errors over WS) | reassembled by `recv`/`recv_frame` (64 streams, 1 MiB, 30 s bounds) |
-| `FLAG_RAW_BINARY`  | `VeyronClient::send_raw_audio` (UDS and WS)      | returned raw by `recv_frame`               |
+| `FLAG_FRAGMENTED`  | `VynkorClient::send_fragmented` (UDS only — errors over WS) | reassembled by `recv`/`recv_frame` (64 streams, 1 MiB, 30 s bounds) |
+| `FLAG_RAW_BINARY`  | `VynkorClient::send_raw_audio` (UDS and WS)      | returned raw by `recv_frame`               |
 
 ## Versioning & unpublished crates
 
@@ -140,7 +149,7 @@ your own `Cargo.toml` (or in `.cargo/config.toml`, gitignored):
 
 ```toml
 [patch.crates-io]
-vynkor-wire = { git = "https://github.com/veyron-core/vynkor-wire" }
+vynkor-wire = { git = "https://github.com/vynkor-core/vynkor-wire" }
 ```
 
 To release the SDK itself (`cargo publish`), crates.io requires registry
@@ -149,10 +158,10 @@ spec first, then publish `vynkor-wire` before `vynkor-sdk`.
 
 ## Client API
 
-For lower-level control, use `VeyronClient` directly:
+For lower-level control, use `VynkorClient` directly:
 
 ```rust,ignore
-let mut client = VeyronClient::connect_with_secret(&socket, secret).await?;
+let mut client = VynkorClient::connect_with_secret(&socket, secret).await?;
 let ack = client.register_with_token("weather", manifest, &jwt).await?;
 
 client.subscribe(vec!["alarm.fired".into()]).await?;
@@ -169,7 +178,7 @@ client.close_session(&action_id, "done").await?;
 Over WebSocket, connect with the gateway URL instead — same API afterwards:
 
 ```rust,ignore
-let mut client = VeyronClient::connect_ws("ws://host:8080/ws", &jwt, Some(secret)).await?;
+let mut client = VynkorClient::connect_ws("ws://host:8080/ws", &jwt, Some(secret)).await?;
 let ack = client.register_with_token("device.geo", manifest, &jwt).await?;
 ```
 
