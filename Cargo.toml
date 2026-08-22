@@ -1,6 +1,6 @@
 [package]
 name = "vynkor-sdk"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2021"
 rust-version = "1.85"
 description = "Rust SDK for writing Vynkor plugins — async IPC client (UDS + WebSocket), Plugin trait, and full Vynkor wire protocol (framing, zstd compression, HMAC frame MACs, fragmentation, raw audio)."
@@ -12,7 +12,7 @@ keywords = ["vynkor", "plugin", "ipc", "sdk", "kernel"]
 categories = ["api-bindings", "asynchronous"]
 
 [dependencies]
-vynkor-wire = "0.0.1"
+vynkor-wire = "0.0.2"
 tokio = { version = "1", features = ["net", "io-util", "time", "rt", "macros", "sync"] }
 tokio-tungstenite = "0.24"
 futures-util = "0.3"

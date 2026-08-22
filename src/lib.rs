@@ -86,5 +86,5 @@ pub use vynkor_wire::mac as frame_mac;
 /// Generated Protobuf types for the Vynkor protocol
 /// (`wire/proto/veyron_protocol.proto`).
 pub mod proto {
-    pub use vynkor_wire::proto::veyron::*;
+    pub use vynkor_wire::proto::vynkor::*;
 }

@@ -47,7 +47,7 @@ use vynkor_wire::framing::{
     parse_frag_header, serialize_header, write_frame_raw, FRAG_HEADER_SIZE, MAX_PAYLOAD_SIZE,
 };
 use vynkor_wire::mac::{compute_tag, derive_session_key, verify_tag};
-use vynkor_wire::proto::veyron::{
+use vynkor_wire::proto::vynkor::{
     envelope, ActionRequest, ActionRequestChunk, ActionResponse, ActionResponseChunk,
     AudioStreamChunk, Envelope, EventAck, EventPublish, EventPublishAck, KernelCommand,
     KernelCommandAck, Ping, PluginManifest, PluginRegister, PluginRegisterAck, SessionClose,
@@ -224,7 +224,7 @@ impl VynkorClient {
     ///
     /// The client always offers the `vynkor` subprotocol (the gateway's
     /// handshake marker). `jwt_token`, when non-empty, is appended to it in
-    /// the `Sec-WebSocket-Protocol: veyron, <jwt>` header — the gateway's
+    /// the `Sec-WebSocket-Protocol: vynkor, <jwt>` header — the gateway's
     /// only channel for the token; never put tokens in the URL, they leak
     /// into access logs. Pass the same token to
     /// [`VynkorClient::register_full`]; a non-empty token is required on
@@ -243,9 +243,9 @@ impl VynkorClient {
             .into_client_request()
             .map_err(|e| VynkorError::Internal(format!("invalid ws url: {e}")))?;
         let protocol = if jwt_token.is_empty() {
-            "veyron".to_string()
+            "vynkor".to_string()
         } else {
-            format!("veyron, {jwt_token}")
+            format!("vynkor, {jwt_token}")
         };
         let value = HeaderValue::from_str(&protocol)
             .map_err(|e| VynkorError::Internal(format!("invalid jwt for ws header: {e}")))?;
