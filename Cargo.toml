@@ -12,7 +12,7 @@ keywords = ["vynkor", "plugin", "ipc", "sdk", "kernel"]
 categories = ["api-bindings", "asynchronous"]
 
 [dependencies]
-vynkor-wire = "0.0.2"
+vynkor-wire = "0.0.3"
 tokio = { version = "1", features = ["net", "io-util", "time", "rt", "macros", "sync"] }
 tokio-tungstenite = "0.24"
 futures-util = "0.3"
