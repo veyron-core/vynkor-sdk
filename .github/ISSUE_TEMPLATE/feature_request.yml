@@ -1,0 +1,24 @@
+name: Feature request
+description: Suggest an idea
+title: "[feat] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: How should it work?
+    validations:
+      required: true
+  - type: dropdown
+    id: repo
+    attributes:
+      label: Repo
+      options: [vynkor, vynkor-wire, vynkor-manager, vynkor-sdk, vynkor-sdk-cpp, vynkor-sdk-python, vynkor-plugins, vynkor-client-android, other]
