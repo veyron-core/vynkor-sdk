@@ -1,0 +1,42 @@
+name: Bug report
+description: File a bug report
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Fill as much as you can. For security issues use Security Advisories, not this form.
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: e.g. vynkor 0.1.0, wire 0.0.3, or commit sha
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: repo
+    attributes:
+      label: Affected repo
+      options: [vynkor (kernel), vynkor-wire, vynkor-manager, vynkor-sdk, vynkor-sdk-cpp, vynkor-sdk-python, vynkor-plugins, vynkor-client-android]
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      placeholder: "1. vyn start ...\n2. vynm install ...\n3. ..."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / config (redact secrets)
+      render: shell
